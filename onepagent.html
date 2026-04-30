@@ -1918,7 +1918,7 @@ const I18N = {
     'media.render.save': 'Saving to workspace',
     'media.needPrompt': 'Enter a prompt for generation.',
     'media.needImage': 'Attach at least one image for this mode.',
-    'media.noModel': 'Configure a generation model in Settings.',
+    'media.noModel': 'Configure a default generation model in Settings.',
     'media.saved': 'Saved generated media:',
     // Memory panel
     'mem.messages': 'Messages',
@@ -1963,7 +1963,7 @@ const I18N = {
     'settings.defaultModel': 'Default Model',
     'settings.defaultModelHint': '(optional; first model used if empty)',
     'settings.mediaModels': 'Generation Models',
-    'settings.mediaModelsHint': '(one per line; optional)',
+    'settings.mediaModelsHint': '(lists optional; default enables tools)',
     'settings.imageModels': 'Image models',
     'settings.videoModels': 'Video models',
     'settings.defaultImageModel': 'Default image model',
@@ -2204,7 +2204,7 @@ const I18N = {
     'media.render.save': '保存到工作区',
     'media.needPrompt': '请输入生成提示词。',
     'media.needImage': '此模式至少需要附加一张图片。',
-    'media.noModel': '请先在设置中配置生成模型。',
+    'media.noModel': '请先在设置中配置默认生成模型。',
     'media.saved': '已保存生成媒体：',
     // Memory panel
     'mem.messages': '消息',
@@ -2254,7 +2254,7 @@ const I18N = {
     'settings.defaultModel': '默认模型',
     'settings.defaultModelHint': '（可选；留空则使用首个模型）',
     'settings.mediaModels': '生成模型',
-    'settings.mediaModelsHint': '（每行一个；可选）',
+    'settings.mediaModelsHint': '（列表可选；默认模型启用工具）',
     'settings.imageModels': '图像模型',
     'settings.videoModels': '视频模型',
     'settings.defaultImageModel': '默认图像模型',
@@ -2679,17 +2679,51 @@ let MEDIA_MODELS = (() => {
 function isMediaGenerationMode(mode = MEDIA_MODE) { return mode && mode !== 'chat'; }
 function isVideoGenerationMode(mode = MEDIA_MODE) { return mode === 'text_video' || mode === 'image_video'; }
 function isImageInputGenerationMode(mode = MEDIA_MODE) { return mode === 'image_image' || mode === 'image_video'; }
-function getProviderMediaModels(kind) {
-  const p = ACTIVE_PROVIDER || {};
+function getProviderMediaModels(kind, provider = ACTIVE_PROVIDER) {
+  const p = provider || {};
   const key = kind === 'video' ? 'videoModels' : 'imageModels';
   return Array.isArray(p[key]) ? p[key].filter(Boolean) : [];
 }
+function getProviderDefaultMediaModel(kind, provider = ACTIVE_PROVIDER) {
+  const p = provider || {};
+  return String(kind === 'video' ? (p.defaultVideoModel || '') : (p.defaultImageModel || '')).trim();
+}
+function getAllProviderProfiles(activeFirst = true) {
+  const providers = getProvidersMap();
+  const list = Object.values(providers).filter(Boolean);
+  if (!activeFirst || !ACTIVE_PROVIDER?.id) return list;
+  return list.sort((a, b) => (a.id === ACTIVE_PROVIDER.id ? -1 : b.id === ACTIVE_PROVIDER.id ? 1 : 0));
+}
+function findMediaProviderByModel(kind, model) {
+  const target = String(model || '').trim();
+  if (!target) return null;
+  return getAllProviderProfiles().find(p => {
+    const def = getProviderDefaultMediaModel(kind, p);
+    const models = getProviderMediaModels(kind, p);
+    return def === target || models.includes(target);
+  }) || ACTIVE_PROVIDER || null;
+}
+function getConfiguredDefaultMedia(kind) {
+  for (const p of getAllProviderProfiles()) {
+    const model = getProviderDefaultMediaModel(kind, p);
+    if (model) return { provider: p, model };
+  }
+  return { provider: ACTIVE_PROVIDER || null, model: '' };
+}
+function hasConfiguredDefaultMediaModel(kind) {
+  return !!getConfiguredDefaultMedia(kind).model;
+}
+function resolveMediaModelConfig(kind, override = '') {
+  const explicit = String(override || '').trim();
+  if (explicit) return { provider: findMediaProviderByModel(kind, explicit), model: explicit };
+  const configured = getConfiguredDefaultMedia(kind);
+  if (!configured.model) return configured;
+  const stored = MEDIA_MODELS[(configured.provider?.id || 'default') + ':' + kind];
+  if (stored) return { provider: findMediaProviderByModel(kind, stored) || configured.provider, model: stored };
+  return configured;
+}
 function getDefaultMediaModel(kind, override = '') {
-  const p = ACTIVE_PROVIDER || {};
-  const stored = MEDIA_MODELS[(p.id || 'default') + ':' + kind];
-  const def = kind === 'video' ? p.defaultVideoModel : p.defaultImageModel;
-  const list = getProviderMediaModels(kind);
-  return override || stored || def || list[0] || '';
+  return resolveMediaModelConfig(kind, override).model || '';
 }
 function setMediaGenerationMode(mode) {
   if (!MEDIA_GENERATION_MODES.has(mode)) mode = 'chat';
@@ -2699,7 +2733,7 @@ function setMediaGenerationMode(mode) {
 }
 function setMediaGenerationModel(model) {
   const kind = isVideoGenerationMode() ? 'video' : 'image';
-  const providerId = (ACTIVE_PROVIDER && ACTIVE_PROVIDER.id) || 'default';
+  const providerId = (resolveMediaModelConfig(kind, model).provider?.id) || (ACTIVE_PROVIDER && ACTIVE_PROVIDER.id) || 'default';
   MEDIA_MODELS[providerId + ':' + kind] = model;
   try { localStorage.setItem(MEDIA_MODEL_KEY, JSON.stringify(MEDIA_MODELS)); } catch {}
 }
@@ -2722,7 +2756,8 @@ function populateMediaModelSelect() {
     return;
   }
   const kind = isVideoGenerationMode() ? 'video' : 'image';
-  const list = getProviderMediaModels(kind);
+  const mediaCfg = getConfiguredDefaultMedia(kind);
+  const list = mediaCfg.provider ? getProviderMediaModels(kind, mediaCfg.provider) : [];
   const current = getDefaultMediaModel(kind);
   const options = list.length ? list.slice() : (current ? [current] : []);
   if (current && !options.includes(current)) options.unshift(current);
@@ -2864,22 +2899,25 @@ function getAuthHeaders() {
 function getProviderAuthHeaders(options = {}) {
   const h = {};
   if (options.json !== false) h['Content-Type'] = 'application/json';
+  const provider = options.provider || ACTIVE_PROVIDER || {};
+  const providerType = provider.type || PROVIDER;
+  const apiKey = provider.apiKey || _keys?.api_key || '';
   const shouldAuth = !options.respectServiceWorker || !_swReady;
-  if (shouldAuth && _keys) {
-    if (PROVIDER === 'anthropic_compat') {
-      h['x-api-key'] = _keys.api_key;
+  if (shouldAuth && apiKey) {
+    if (providerType === 'anthropic_compat') {
+      h['x-api-key'] = apiKey;
       h['anthropic-version'] = '2023-06-01';
       h['anthropic-dangerous-direct-browser-access'] = 'true';
     } else {
-      h['Authorization'] = `Bearer ${_keys.api_key}`;
+      h['Authorization'] = `Bearer ${apiKey}`;
     }
   }
   return h;
 }
-function buildProviderApiUrl(pathOrUrl) {
+function buildProviderApiUrl(pathOrUrl, provider = ACTIVE_PROVIDER) {
   const raw = String(pathOrUrl || '').trim();
   if (/^https?:\/\//i.test(raw)) return raw;
-  const ep = (_keys?.api_endpoint || CFG.api_endpoint || '').replace(/\/+$/, '');
+  const ep = ((provider && provider.endpoint) || _keys?.api_endpoint || CFG.api_endpoint || '').replace(/\/+$/, '');
   const path = raw.startsWith('/') ? raw : '/' + raw;
   if (/\/v\d+$/i.test(ep) && /^\/v\d+\//i.test(path)) return ep.replace(/\/v\d+$/i, '') + path;
   return ep + path;
@@ -2976,8 +3014,6 @@ Available tools:
 - PythonExec: Run Python code in-browser (Pyodide WASM). Python file APIs are bridged to the shared browser filesystem through a workspacefs layer, so normal paths like /src/main.py and /skills/my-skill/SKILL.md work directly without full filesystem sync. For libraries that require a native temp path, use workspacefs.materialize_to_tmp(...) and workspacefs.persist_tmp_file(...). Use micropip only for pure-Python packages. An internal helper module \`workspace_cli\` and a ready-to-run script at \`/__internal__/workspace_cli.py\` are also available for higher-level file operations.
 - JSExec: Run JavaScript in browser sandbox. Use vfsRead/vfsWrite for text files, vfsReadBinary/vfsWriteBinary for binary files, vfsStat for metadata, console.log() for output, fetch() for HTTP.
 - WebSearch: Search the web via Tavily AI. Returns titles, URLs and content snippets. Requires a Tavily API key set in the Web Search panel (right sidebar).
-- GenerateImage: Generate images from text, or edit/transform attached image paths. When the user asks to generate, draw, create, design, or edit an image, call GenerateImage directly in normal chat and omit the model field unless the user names a specific model; no mode switch is required. Do not answer with only a textual description of the image. Generated files are saved under /generations.
-- GenerateVideo: Generate videos from text, or animate/transform an attached image path. When the user asks to generate, create, animate, or edit a video, call GenerateVideo directly in normal chat and omit the model field unless the user names a specific model; no mode switch is required. Do not answer with only a textual description of the video. Generated files are saved under /generations.
 
 Filesystem rules:
 - Treat the browser filesystem as the single source of truth.
@@ -6382,7 +6418,7 @@ async function saveSettings() {
   const model_contexts = readModelContextsFromUI();
 
   const providers = getProvidersMap();
-  providers[profId] = { id: profId, name, type, endpoint, apiKey, models, defaultModel: defaultModel || models[0] || '', imageModels, videoModels, defaultImageModel: defaultImageModel || imageModels[0] || '', defaultVideoModel: defaultVideoModel || videoModels[0] || '', imageGenerationEndpoint, imageEditEndpoint, videoGenerationEndpoint, videoStatusEndpoint, model_contexts };
+  providers[profId] = { id: profId, name, type, endpoint, apiKey, models, defaultModel: defaultModel || models[0] || '', imageModels, videoModels, defaultImageModel, defaultVideoModel, imageGenerationEndpoint, imageEditEndpoint, videoGenerationEndpoint, videoStatusEndpoint, model_contexts };
   _saveProviders({ providers });
   setActiveProviderId(profId);
   ACTIVE_PROVIDER = providers[profId];
@@ -8411,6 +8447,8 @@ function rebuildToolDefs(headId = activeEntryId) {
   allToolsAnthropic = BASE_TOOLS_ANTHROPIC.filter(t => {
     // TodoWrite and ExitPlanMode are plan-mode-only tools
     if (t.name === 'TodoWrite' || t.name === 'ExitPlanMode') return planMode;
+    if (t.name === 'GenerateImage') return hasConfiguredDefaultMediaModel('image');
+    if (t.name === 'GenerateVideo') return hasConfiguredDefaultMediaModel('video');
     return true;
   });
   skillToolHandlers = {};
@@ -8474,8 +8512,8 @@ async function executeTool(name, input) {
       case 'JSExec': return await toolJSExec(input);
       case 'WebSearch': return await toolWebSearch(input);
       case 'Fetch': return await toolFetch(input);
-      case 'GenerateImage': return await toolGenerateImage(input);
-      case 'GenerateVideo': return await toolGenerateVideo(input);
+      case 'GenerateImage': return hasConfiguredDefaultMediaModel('image') ? await toolGenerateImage(input) : `Error: ${t('media.noModel')}`;
+      case 'GenerateVideo': return hasConfiguredDefaultMediaModel('video') ? await toolGenerateVideo(input) : `Error: ${t('media.noModel')}`;
       case 'TodoWrite': return toolTodoWrite(input);
       case 'ExitPlanMode': return await toolExitPlanMode(input);
       case 'memory_save': return await toolMemorySave(input);
@@ -9881,6 +9919,16 @@ function getUserTextFromContent(content) {
   if (!Array.isArray(content)) return '';
   return content.filter(block => block.type === 'text' && typeof block.text === 'string').map(block => block.text).join('\n\n').trim();
 }
+function getMediaToolPrompt() {
+  const hasImage = hasConfiguredDefaultMediaModel('image');
+  const hasVideo = hasConfiguredDefaultMediaModel('video');
+  if (!hasImage && !hasVideo) return '';
+  const parts = [];
+  if (hasImage) parts.push('If the user asks to generate, draw, create, design, or edit an image, call GenerateImage in this normal chat turn.');
+  if (hasVideo) parts.push('If the user asks to generate, create, animate, or edit a video, call GenerateVideo.');
+  parts.push('Omit the model argument unless the user explicitly names one so the configured default image/video model is used. The tool prompt must be a complete generation prompt synthesized from the latest user request and relevant conversation history (style, subject, constraints, prior revisions), not just a verbatim copy of the last user message. Do not merely describe requested media when the matching generation tool is available.');
+  return '\n\n[MEDIA GENERATION]\n' + parts.join(' ');
+}
 function shouldAutoGenerateMedia(text) {
   text = String(text || '').toLowerCase();
   if (!text) return null;
@@ -9888,8 +9936,8 @@ function shouldAutoGenerateMedia(text) {
   const videoWords = ['视频', '动画', '影片', '短片', 'video', 'animation'];
   const actionWords = ['生成', '创建', '制作', '画', '绘制', '设计', 'create', 'generate', 'draw', 'design', 'make'];
   const hasAction = actionWords.some(w => text.includes(w));
-  if (hasAction && videoWords.some(w => text.includes(w))) return 'video';
-  if (hasAction && imageWords.some(w => text.includes(w))) return 'image';
+  if (hasAction && videoWords.some(w => text.includes(w)) && hasConfiguredDefaultMediaModel('video')) return 'video';
+  if (hasAction && imageWords.some(w => text.includes(w)) && hasConfiguredDefaultMediaModel('image')) return 'image';
   return null;
 }
 function makeToolUseBlock(name, input) {
@@ -9959,7 +10007,7 @@ async function generateMediaPromptWithAI(userText, kind, headId = activeEntryId)
 }
 async function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId) {
   const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, JSExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
-  const mediaToolPrompt = '\n\n[MEDIA GENERATION]\nIf the user asks to generate, draw, create, design, or edit an image, call GenerateImage in this normal chat turn. If the user asks to generate, create, animate, or edit a video, call GenerateVideo. Omit the model argument unless the user explicitly names one so the configured default image/video model is used. The tool prompt must be a complete generation prompt synthesized from the latest user request and relevant conversation history (style, subject, constraints, prior revisions), not just a verbatim copy of the last user message. Do not merely describe the requested media when a generation tool is available.';
+  const mediaToolPrompt = getMediaToolPrompt();
   const memPrompt = await memRecallForPrompt(messages);
   const systemPrompt = document.getElementById('contextEditor').value + getActiveSkillMetadataPrompts() + getTriggeredSkillPrompts(headId) + getBeijingTimeStr() + mediaToolPrompt + planPrompt + memPrompt;
   rebuildToolDefs(headId);
@@ -11223,6 +11271,8 @@ function getMediaPromptDisplay(mode, text) {
 }
 function addMediaModeHintToUserContent(content, mode, filePaths) {
   if (!isMediaGenerationMode(mode)) return content;
+  const kind = isVideoGenerationMode(mode) ? 'video' : 'image';
+  if (!hasConfiguredDefaultMediaModel(kind)) return content;
   const toolName = isVideoGenerationMode(mode) ? 'GenerateVideo' : 'GenerateImage';
   const inputHint = isImageInputGenerationMode(mode) && filePaths?.length ? ` Use attached image path(s) as input_image_paths: ${filePaths.join(', ')}` : '';
   const hint = `[Media generation mode selected: ${mode}. Use the ${toolName} tool to fulfill this request in the normal chat flow; do not answer with instructions only.${inputHint}]`;
@@ -11322,10 +11372,10 @@ async function serializeMediaInputImages(filePaths) {
   }
   return images;
 }
-function getMediaGenerationUrl(mode) {
-  const p = ACTIVE_PROVIDER || {};
-  if (isVideoGenerationMode(mode)) return buildProviderApiUrl(p.videoGenerationEndpoint || '/v1/videos');
-  return buildProviderApiUrl(mode === 'image_image' ? (p.imageEditEndpoint || '/v1/images/edits') : (p.imageGenerationEndpoint || '/v1/images/generations'));
+function getMediaGenerationUrl(mode, provider = ACTIVE_PROVIDER) {
+  const p = provider || {};
+  if (isVideoGenerationMode(mode)) return buildProviderApiUrl(p.videoGenerationEndpoint || '/v1/videos', p);
+  return buildProviderApiUrl(mode === 'image_image' ? (p.imageEditEndpoint || '/v1/images/edits') : (p.imageGenerationEndpoint || '/v1/images/generations'), p);
 }
 function buildMediaGenerationBody(mode, prompt, model, images, variant = 0) {
   const base = { model, prompt };
@@ -11343,14 +11393,14 @@ function buildMediaGenerationBody(mode, prompt, model, images, variant = 0) {
 function getMediaGenerationBodyVariants(mode) {
   return mode === 'image_image' ? [0, 1, 2] : [0];
 }
-async function pollMediaGeneration(job, mode) {
-  const p = ACTIVE_PROVIDER || {};
+async function pollMediaGeneration(job, mode, provider = ACTIVE_PROVIDER) {
+  const p = provider || {};
   const id = job.id || job.job_id || job.task_id;
   if (!id || !p.videoStatusEndpoint) return job;
-  const url = buildProviderApiUrl(p.videoStatusEndpoint.replace('{id}', encodeURIComponent(id)));
+  const url = buildProviderApiUrl(p.videoStatusEndpoint.replace('{id}', encodeURIComponent(id)), p);
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 2000));
-    const resp = await fetchWithRetry(url, { headers: getProviderAuthHeaders({ json: true, respectServiceWorker: false }) });
+    const resp = await fetchWithRetry(url, { headers: getProviderAuthHeaders({ json: true, respectServiceWorker: false, provider: p }) });
     if (!resp.ok) throw new Error('Video status failed: HTTP ' + resp.status);
     const data = await resp.json();
     const status = String(data.status || data.state || '').toLowerCase();
@@ -11361,16 +11411,18 @@ async function pollMediaGeneration(job, mode) {
 }
 async function runMediaGeneration(mode, prompt, filePaths, options = {}) {
   const kind = isVideoGenerationMode(mode) ? 'video' : 'image';
-  const model = getDefaultMediaModel(kind, options.model || '');
+  const mediaCfg = resolveMediaModelConfig(kind, options.model || '');
+  const model = mediaCfg.model;
+  const mediaProvider = mediaCfg.provider || ACTIVE_PROVIDER || {};
   if (!model) throw new Error(t('media.noModel'));
   if (!prompt) throw new Error(t('media.needPrompt'));
   const images = await serializeMediaInputImages(filePaths);
   if (isImageInputGenerationMode(mode) && !images.length) throw new Error(t('media.needImage'));
-  const url = getMediaGenerationUrl(mode);
+  const url = getMediaGenerationUrl(mode, mediaProvider);
   let resp, errorText = '';
   for (const variant of getMediaGenerationBodyVariants(mode)) {
     const body = buildMediaGenerationBody(mode, prompt, model, images, variant);
-    resp = await fetchWithRetry(url, { method: 'POST', headers: getProviderAuthHeaders({ json: true, respectServiceWorker: false }), body: JSON.stringify(body), signal: abortCtrl?.signal });
+    resp = await fetchWithRetry(url, { method: 'POST', headers: getProviderAuthHeaders({ json: true, respectServiceWorker: false, provider: mediaProvider }), body: JSON.stringify(body), signal: abortCtrl?.signal });
     if (resp.ok) break;
     errorText = await resp.text();
     const msg = errorText.toLowerCase();
@@ -11378,7 +11430,7 @@ async function runMediaGeneration(mode, prompt, filePaths, options = {}) {
   }
   if (!resp.ok) throw new Error(`API Error (${resp.status}): ${errorText.slice(0, 300)}`);
   let data = await resp.json();
-  if (kind === 'video' && !_extractMediaItems(data, kind).length) data = await pollMediaGeneration(data, mode);
+  if (kind === 'video' && !_extractMediaItems(data, kind).length) data = await pollMediaGeneration(data, mode, mediaProvider);
   const items = _extractMediaItems(data, kind);
   if (!items.length) throw new Error('No generated media returned.');
   const paths = await saveGeneratedMediaItems(items, kind);
