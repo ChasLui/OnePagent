@@ -10097,40 +10097,45 @@ async function parseAnthropicStream(reader, onText, onReasoning, onToolStart, on
 async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, options = {}) {
   const keepReasoning = !!options.keepReasoning;
   const includeReasoningUsage = !!options.includeReasoningUsage;
-  const dec = new TextDecoder(); let buf = '', txt = '', reasoning = ''; const tcs = {}; let stop = null; let usageTotal = 0;
-  while (true) { const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop();
-    for (const line of lines) { if (!line.startsWith('data: ')) continue; const ds = line.slice(6).trim(); if (ds === '[DONE]') { stop = stop || 'end_turn'; continue; } let d; try { d = JSON.parse(ds); } catch { continue; } const usage = extractUsageTotal(d.usage, { includeReasoningDetails: includeReasoningUsage }); if (usage) usageTotal = usage; const ch = d.choices?.[0]; if (!ch) continue;
-      if (ch.finish_reason) stop = ch.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn';
-      const dl = ch.delta; if (!dl) continue;
-      const reasoningChunk = extractReasoningChunkFromOpenAIDelta(dl);
-      if (reasoningChunk) { if (keepReasoning) reasoning += reasoningChunk; onReasoning(reasoningChunk); }
-      const textChunk = extractTextChunkFromOpenAIDelta(dl);
-      if (textChunk) { txt += textChunk; onText(textChunk); }
-      if (dl.tool_calls) {
-        for (const tc of dl.tool_calls) {
-          const i = tc.index;
-          if (!tcs[i]) tcs[i] = { id: tc.id || `call_${i}`, name: '', arguments: '', started: false };
-          if (tc.id) tcs[i].id = tc.id;
-          if (tc.function?.name) tcs[i].name = tc.function.name;
-          if (!tcs[i].started && tcs[i].name) {
-            tcs[i].started = true;
-            onToolStart({ type: 'tool_use', id: tcs[i].id, name: tcs[i].name, index: i });
-          }
-          if (tc.function?.arguments) {
-            tcs[i].arguments += tc.function.arguments;
+  const dec = new TextDecoder(); let buf = '', txt = '', reasoning = ''; const tcs = {}; let stop = null; let usageTotal = 0; let streamError = '';
+  try {
+    while (true) { const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split('\n'); buf = lines.pop();
+      for (const line of lines) { if (!line.startsWith('data: ')) continue; const ds = line.slice(6).trim(); if (ds === '[DONE]') { stop = stop || 'end_turn'; continue; } let d; try { d = JSON.parse(ds); } catch { continue; } const usage = extractUsageTotal(d.usage, { includeReasoningDetails: includeReasoningUsage }); if (usage) usageTotal = usage; const ch = d.choices?.[0]; if (!ch) continue;
+        if (ch.finish_reason) stop = ch.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn';
+        const dl = ch.delta; if (!dl) continue;
+        const reasoningChunk = extractReasoningChunkFromOpenAIDelta(dl);
+        if (reasoningChunk) { if (keepReasoning) reasoning += reasoningChunk; onReasoning(reasoningChunk); }
+        const textChunk = extractTextChunkFromOpenAIDelta(dl);
+        if (textChunk) { txt += textChunk; onText(textChunk); }
+        if (dl.tool_calls) {
+          for (const tc of dl.tool_calls) {
+            const i = tc.index;
+            if (!tcs[i]) tcs[i] = { id: tc.id || `call_${i}`, name: '', arguments: '', started: false };
+            if (tc.id) tcs[i].id = tc.id;
+            if (tc.function?.name) tcs[i].name = tc.function.name;
             if (!tcs[i].started && tcs[i].name) {
               tcs[i].started = true;
               onToolStart({ type: 'tool_use', id: tcs[i].id, name: tcs[i].name, index: i });
             }
-            onToolDelta(i, tc.function.arguments);
+            if (tc.function?.arguments) {
+              tcs[i].arguments += tc.function.arguments;
+              if (!tcs[i].started && tcs[i].name) {
+                tcs[i].started = true;
+                onToolStart({ type: 'tool_use', id: tcs[i].id, name: tcs[i].name, index: i });
+              }
+              onToolDelta(i, tc.function.arguments);
+            }
           }
         }
       }
     }
+  } catch (e) {
+    if (isAbortError(e)) throw e;
+    streamError = e?.message || String(e || 'Network error');
   }
   const blocks = []; if (keepReasoning && reasoning) blocks.push({ type: 'reasoning', reasoning_content: reasoning }); if (txt) blocks.push({ type: 'text', text: txt });
   for (const i of Object.keys(tcs).sort((a,b) => a-b)) { let inp = {}; try { inp = JSON.parse(tcs[i].arguments); } catch {} blocks.push({ type: 'tool_use', id: tcs[i].id, name: tcs[i].name, index: Number(i), input: inp }); }
-  return { content: blocks, stop_reason: stop || 'end_turn', usage_total: usageTotal };
+  return { content: blocks, stop_reason: streamError ? 'interrupted' : (stop || 'end_turn'), usage_total: usageTotal, stream_error: streamError };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -10338,9 +10343,25 @@ async function _runAgentLoop(userText, options = {}) {
           scrollBottom();
         }, 80);
       };
-      const result = PROVIDER === 'anthropic_compat'
-        ? await parseAnthropicStream(reader, onText, onReasoning, onToolStart, onToolDelta)
-        : await parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, { keepReasoning: isDeepSeekActiveProvider(), includeReasoningUsage: isDeepSeekActiveProvider() });
+      let result;
+      try {
+        result = PROVIDER === 'anthropic_compat'
+          ? await parseAnthropicStream(reader, onText, onReasoning, onToolStart, onToolDelta)
+          : await parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToolDelta, { keepReasoning: isDeepSeekActiveProvider(), includeReasoningUsage: isDeepSeekActiveProvider() });
+      } catch (e) {
+        if (isAbortError(e)) throw e;
+        result = { content: fullText ? [{ type: 'text', text: fullText }] : [], stop_reason: 'interrupted', usage_total: 0, stream_error: e?.message || String(e || 'Network error') };
+      }
+      if (result.stream_error) {
+        const partialToolText = Object.values(_toolMap).map(tool => {
+          const content = _extractToolContent(tool.name, tool.json).trim();
+          return content ? `Partial ${tool.name} content:\n\`\`\`\n${content}\n\`\`\`` : '';
+        }).filter(Boolean).join('\n\n');
+        const safeContent = result.content.filter(b => b.type === 'reasoning' || b.type === 'text');
+        if (!safeContent.some(b => b.type === 'text') && partialToolText) safeContent.push({ type: 'text', text: partialToolText });
+        else if (partialToolText) safeContent.push({ type: 'text', text: '\n\n' + partialToolText });
+        result.content = safeContent;
+      }
       const reportedUsage = Number(result.usage_total) || 0;
       const turnTokens = isDeepSeekActiveProvider() ? Math.max(reportedUsage, estimatedRequestTokens + estimateTokenCountFromText(fullText)) : reportedUsage;
       totalTokens += turnTokens;
@@ -10370,8 +10391,14 @@ async function _runAgentLoop(userText, options = {}) {
       }
       textEl.querySelector('.streaming-cursor')?.remove();
       finalizeReasoning(reasoningEl);
+      if (result.stream_error) {
+        const interrupted = document.createElement('div');
+        interrupted.className = 'tool-card error';
+        interrupted.innerHTML = `<div class="tool-header"><span class="tool-name">Network interrupted</span><span class="tool-summary">Partial output preserved. Click regenerate to continue if needed.</span></div><div class="tool-body show"><div class="tool-output">${esc(result.stream_error)}</div></div>`;
+        msgEl.appendChild(interrupted);
+      }
       if (!fullText && result.content.some(b => b.type === 'tool_use') && result.content.every(b => b.type === 'tool_use' || b.type === 'reasoning')) msgEl.querySelector('[data-role="assistant-text"]')?.remove();
-      const assistantEntry = appendSessionEntry('message', { role: 'assistant', content: result.content, promptEntryId });
+      const assistantEntry = appendSessionEntry('message', { role: 'assistant', content: result.content, promptEntryId, streamError: result.stream_error || undefined });
       rebuildConversation();
       msgEl.dataset.assistantEntryId = assistantEntry.id;
       updateMemoryUI();
@@ -10382,7 +10409,7 @@ async function _runAgentLoop(userText, options = {}) {
         memExtractAfterTurn({ userText, assistantContent: result.content, loopCount, convId: activeConvId })
           .catch(e => console.warn('memExtractAfterTurn failed', e));
       }
-      const tus = result.content.filter(b => b.type === 'tool_use');
+      const tus = result.stream_error ? [] : result.content.filter(b => b.type === 'tool_use');
       if (tus.length) {
         const trs = [];
         for (const [toolOrder, tu] of tus.entries()) {
@@ -10435,7 +10462,7 @@ async function _runAgentLoop(userText, options = {}) {
         setStatus('running', t('status.processing'));
         scrollBottom();
       }
-      if (result.stop_reason !== 'tool_use') break;
+      if (result.stream_error || result.stop_reason !== 'tool_use') break;
     }
   } catch (e) { if (e.name !== 'AbortError') appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); }
   finally {
