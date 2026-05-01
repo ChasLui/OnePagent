@@ -1206,9 +1206,9 @@ document.addEventListener('DOMContentLoaded', function() {
       <span class="loop-badge" id="loopBadge">Loop: 0</span>
       <span class="loop-badge" id="tokenBadge">Tokens: 0</span>
       <button class="top-btn hide-mobile" onclick="clearConversation()" data-i18n="btn.clear">Clear</button>
-      <button class="top-btn hide-mobile" onclick="runFsDiagnostics()" data-i18n="btn.diag">Diag</button>
       <button class="top-btn hide-mobile" onclick="downloadAll()" data-i18n="btn.export">Export</button>
       <button class="top-btn hide-mobile top-btn-icon" id="planBtn" onclick="togglePlanMode()" title="Plan Mode: block writes, require approval before execution" data-i18n-title="btn.planTitle"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-4"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg><span data-i18n="btn.plan">Plan</span></button>
+      <button class="top-btn hide-mobile top-btn-icon" id="ralphBtn" onclick="toggleRalphMode()" title="Ralph Loop: unattended continue-until-done mode"><span>Ralph</span></button>
       <button class="top-btn hide-mobile top-btn-icon" id="memBtn" onclick="openMemoryModal()" title="Memory: facts persisted across conversations" data-i18n-title="btn.memoryTitle" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a4 4 0 0 0-4 4 4 4 0 0 0-4 4 4 4 0 0 0 2 3.46A4 4 0 0 0 8 22a4 4 0 0 0 4-2 4 4 0 0 0 4 2 4 4 0 0 0 2-8.54A4 4 0 0 0 20 10a4 4 0 0 0-4-4 4 4 0 0 0-4-4Z"/><path d="M12 6v16M8 10h0M16 10h0M9 14h6"/></svg><span data-i18n="btn.memory">Memory</span></button>
       <span style="position:relative;display:inline-block">
         <button class="top-btn hide-mobile" id="syncBtn" onclick="toggleSyncMenu()" title="Cloud sync to S3-compatible bucket" data-i18n-title="btn.syncTitle"><svg class="ui-icon" aria-hidden="true"><use href="#i-cloud"></use></svg> <span data-i18n="btn.sync">Sync</span></button>
@@ -1616,6 +1616,22 @@ document.addEventListener('DOMContentLoaded', function() {
       <label><span data-i18n="settings.tavilyKey">Tavily API Key</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.tavilyKeyHint">(for Web Search)</span></label>
       <input type="password" id="setTavilyKey" placeholder="tvly-...">
       <div id="setStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
+
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">Diagnostics</label>
+      <button type="button" class="modal-btn secondary" onclick="runFsDiagnostics()" style="width:100%;padding:8px 10px;font-size:11px;margin-bottom:6px">Run file system diagnostics</button>
+
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><span>Ralph Loop</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400">(unattended continue-until-done mode)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setRalphEnabled" style="width:auto;margin:0"> <span>Enable Ralph Loop by default</span></label>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0">Max Ralph iterations</label>
+        <input type="number" id="setRalphMaxIterations" min="1" max="20" placeholder="5" style="width:80px;margin-bottom:0">
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin:0"><input type="checkbox" id="setRalphUnlimited" style="width:auto;margin:0" onchange="document.getElementById('setRalphMaxIterations').disabled=this.checked"> <span>Unlimited</span></label>
+      </div>
+      <label style="margin-top:0">Ralph completion marker</label>
+      <input type="text" id="setRalphCompletionMarker" placeholder="RALPH_DONE" style="margin-bottom:6px">
+      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:6px">Unattended mode stops when the assistant outputs the completion marker. It will not approve Plan Mode or destructive human prompts.</div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
       <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><svg class="ui-icon" aria-hidden="true"><use href="#i-brain"></use></svg> <span data-i18n="settings.memHeader">Memory</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.memHeaderHint">(persists facts across conversations)</span></label>
@@ -2624,6 +2640,19 @@ function saveSettingsToStorage(s) {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
 }
 const _userSettings = loadSettings();
+const RALPH_DEFAULTS = { enabled: false, maxIterations: 5, hardMaxIterations: 20, completionMarker: 'RALPH_DONE', unlimited: false };
+function getRalphSettings() {
+  const raw = loadSettings()?.ralph || {};
+  const maxRaw = parseInt(raw.maxIterations, 10);
+  const unlimited = raw.unlimited === true;
+  const marker = String(raw.completionMarker || RALPH_DEFAULTS.completionMarker).trim() || RALPH_DEFAULTS.completionMarker;
+  return {
+    enabled: raw.enabled === true,
+    unlimited,
+    maxIterations: unlimited ? Infinity : (Number.isFinite(maxRaw) ? Math.min(RALPH_DEFAULTS.hardMaxIterations, Math.max(1, maxRaw)) : RALPH_DEFAULTS.maxIterations),
+    completionMarker: marker
+  };
+}
 // Provider profiles (user-defined). Each provider is either anthropic-compatible or openai-compatible.
 const PROVIDERS_KEY = 'ba_providers_v1';
 const ACTIVE_PROVIDER_KEY = 'ba_active_provider_id';
@@ -3147,6 +3176,8 @@ let loopCount = 0;
 let todos = [];
 let subAgentRuns = [];
 let planMode = false;
+let ralphModeEnabled = getRalphSettings().enabled;
+let ralphRun = null;
 const SUB_AGENT_TOOL_NAME = 'RunSubAgent';
 const SUB_AGENT_DEFAULT_MAX_STEPS = 4;
 const SUB_AGENT_MAX_STEPS = 8;
@@ -6880,6 +6911,12 @@ function openSettingsModal() {
   // Non-provider settings (tavily/memory/s3/etc.) remain in SETTINGS_KEY storage
   document.getElementById('setTavilyKey').value = s.tavily_api_key || (_keys && _keys.tavily_api_key) || '';
   document.getElementById('setStatus').textContent = '';
+  const ralph = getRalphSettings();
+  document.getElementById('setRalphEnabled').checked = !!ralph.enabled;
+  document.getElementById('setRalphUnlimited').checked = !!ralph.unlimited;
+  document.getElementById('setRalphMaxIterations').value = String(Number.isFinite(ralph.maxIterations) ? ralph.maxIterations : RALPH_DEFAULTS.maxIterations);
+  document.getElementById('setRalphMaxIterations').disabled = !!ralph.unlimited;
+  document.getElementById('setRalphCompletionMarker').value = ralph.completionMarker;
   const mem = { ...MEM_DEFAULTS, ...(s.memory || {}) };
   document.getElementById('setMemEnabled').checked = !!mem.enabled;
   document.getElementById('setMemAutoExtract').checked = !!mem.autoExtract;
@@ -7157,12 +7194,21 @@ async function saveSettings() {
   const memAutoExtract = document.getElementById('setMemAutoExtract').checked;
   const memMaxRecallRaw = parseInt(document.getElementById('setMemMaxRecall').value, 10);
   const memMaxRecall = Number.isFinite(memMaxRecallRaw) && memMaxRecallRaw >= 0 ? Math.min(40, memMaxRecallRaw) : MEM_DEFAULTS.maxRecall;
-  const prevMem = loadSettings()?.memory || {};
+  const ralphMaxRaw = parseInt(document.getElementById('setRalphMaxIterations').value, 10);
+  const ralphUnlimited = document.getElementById('setRalphUnlimited').checked;
+  const ralphMaxIterations = Number.isFinite(ralphMaxRaw) ? Math.min(RALPH_DEFAULTS.hardMaxIterations, Math.max(1, ralphMaxRaw)) : RALPH_DEFAULTS.maxIterations;
+  const ralphCompletionMarker = document.getElementById('setRalphCompletionMarker').value.trim() || RALPH_DEFAULTS.completionMarker;
+  const prevSettings = loadSettings() || {};
+  const prevMem = prevSettings.memory || {};
   const settings = {
+    ...prevSettings,
     tavily_api_key: tavilyKey,
+    ralph: { enabled: document.getElementById('setRalphEnabled').checked, unlimited: ralphUnlimited, maxIterations: ralphMaxIterations, completionMarker: ralphCompletionMarker },
     memory: { enabled: memEnabled, autoExtract: memAutoExtract, maxRecall: memMaxRecall, extractionModel: prevMem.extractionModel || '' }
   };
   saveSettingsToStorage(settings);
+  ralphModeEnabled = settings.ralph.enabled;
+  renderRalphButton();
 
   if (memEnabled && !prevMem.enabled) { openMemDB().catch(e => console.warn('Memory DB open failed', e)); memLoadCache().catch(() => {}); }
   renderMemoryButton();
@@ -8156,6 +8202,73 @@ function renderPlanButton() {
     btn.style.color = '';
     btn.style.borderColor = '';
   }
+}
+function toggleRalphMode() {
+  if (isGenerating) return;
+  ralphModeEnabled = !ralphModeEnabled;
+  renderRalphButton();
+  appendSystemMsg(ralphModeEnabled
+    ? 'Ralph Loop ON — the agent will continue unattended until done or a guard stops it.'
+    : 'Ralph Loop OFF.');
+}
+function renderRalphButton() {
+  const btn = document.getElementById('ralphBtn');
+  if (!btn) return;
+  const active = ralphModeEnabled || !!ralphRun?.active;
+  const label = ralphRun?.active ? `Ralph ${ralphRun.iteration}/${ralphRun.unlimited ? '∞' : ralphRun.maxIterations}` : 'Ralph';
+  const span = btn.querySelector('span');
+  if (span) span.textContent = label;
+  btn.title = ralphRun?.active ? `Ralph Loop running: ${ralphRun.iteration}/${ralphRun.unlimited ? '∞' : ralphRun.maxIterations}` : 'Ralph Loop: unattended continue-until-done mode';
+  if (active) {
+    btn.style.background = 'var(--accent-orange)';
+    btn.style.color = '#fff';
+    btn.style.borderColor = 'var(--accent-orange)';
+  } else {
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+  }
+}
+function normalizeRalphOptions(raw) {
+  if (!raw?.enabled) return { enabled: false };
+  const maxRaw = parseInt(raw.maxIterations, 10);
+  const unlimited = raw.unlimited === true;
+  return {
+    enabled: true,
+    unlimited,
+    maxIterations: unlimited ? Infinity : (Number.isFinite(maxRaw) ? Math.min(RALPH_DEFAULTS.hardMaxIterations, Math.max(1, maxRaw)) : RALPH_DEFAULTS.maxIterations),
+    completionMarker: String(raw.completionMarker || RALPH_DEFAULTS.completionMarker).trim() || RALPH_DEFAULTS.completionMarker
+  };
+}
+function getRalphLoopPrompt() {
+  if (!ralphRun?.active) return '';
+  return `\n\n[RALPH LOOP ACTIVE]\nYou are running unattended on the original task:\n<task>\n${ralphRun.originalTask}\n</task>\n\nDo not ask the user for input. Use available tools to make progress. If you need a human decision, secret, approval, or unsafe/destructive action, stop with a clear blocker. When the task is fully complete, include the marker ${ralphRun.completionMarker} in your final response. If more work remains after a normal assistant response, the system may re-enter you for another unattended iteration.`;
+}
+function ralphSignature({ fullText, todos }) {
+  const text = String(fullText || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 1200);
+  const counts = (todos || []).reduce((acc, todo) => { acc[todo.status] = (acc[todo.status] || 0) + 1; return acc; }, {});
+  return `${text}|todo:${counts.completed || 0}/${counts.in_progress || 0}/${counts.pending || 0}`;
+}
+function shouldContinueRalphLoop({ result, fullText, todos, ralphRun }) {
+  if (!ralphRun?.active) return { continue: false, reason: 'inactive' };
+  if (ralphRun.cancelled) return { continue: false, reason: 'cancelled' };
+  if (result?.stream_error) return { continue: false, reason: 'stream error' };
+  if (String(fullText || '').toLowerCase().includes(String(ralphRun.completionMarker || RALPH_DEFAULTS.completionMarker).toLowerCase())) return { continue: false, reason: 'completed' };
+  if (!ralphRun.unlimited && ralphRun.iteration >= ralphRun.maxIterations) return { continue: false, reason: 'max iterations reached' };
+  const sig = ralphSignature({ fullText, todos });
+  const seen = (ralphRun.seenSignatures.get(sig) || 0) + 1;
+  ralphRun.seenSignatures.set(sig, seen);
+  if (seen >= 2) return { continue: false, reason: 'no progress detected' };
+  return { continue: true, reason: 'continuing unattended' };
+}
+function buildRalphContinuationText({ ralphRun, lastAssistantText }) {
+  return `[Ralph Loop iteration ${ralphRun.iteration}/${ralphRun.unlimited ? '∞' : ralphRun.maxIterations}]\n\nContinue the same original task without waiting for the user.\n\nOriginal task:\n${ralphRun.originalTask}\n\nPrevious assistant response:\n${truncateMiddleText(lastAssistantText || '(no text response)', 3000)}\n\nInstructions:\n- If all requirements are complete, respond with ${ralphRun.completionMarker} and a concise final summary.\n- If work remains, continue autonomously.\n- Do not ask the user for input.\n- If blocked, state the blocker and stop.`;
+}
+function appendRalphContinuationMessage({ ralphRun, lastAssistantText }) {
+  const text = buildRalphContinuationText({ ralphRun, lastAssistantText });
+  appendSessionEntry('message', { role: 'user', content: [{ type: 'text', text }], ralphSynthetic: true, promptEntryId: ralphRun.promptEntryId });
+  rebuildConversation();
+  appendSystemMsg(`Ralph Loop continuing: iteration ${ralphRun.iteration}/${ralphRun.unlimited ? '∞' : ralphRun.maxIterations}.`);
 }
 
 let _planModalResolver = null;
@@ -9639,9 +9752,24 @@ async function toolFetch(input) {
   }
 }
 
+function buildUnattendedHitlResult(input) {
+  const state = _normalizeHitlInput(input);
+  const reason = 'Ralph Loop is active; no human input is available. Proceed with safe assumptions or stop with a blocker.';
+  if (state.mode === 'confirm') return { status: 'unattended', mode: 'confirm', confirmed: false, answer: 'no', reason };
+  if (state.mode === 'choice') {
+    if (state.defaultChoice) {
+      const idx = state.choices.indexOf(state.defaultChoice);
+      return { status: 'unattended', mode: 'choice', answer: state.defaultChoice, choice_index: idx >= 0 ? idx : null, custom: idx < 0, reason };
+    }
+    return { status: 'cancelled', mode: 'choice', answer: '', reason };
+  }
+  if (state.defaultChoice) return { status: 'unattended', mode: 'text', answer: state.defaultChoice, reason };
+  return { status: 'cancelled', mode: 'text', answer: '', reason };
+}
 async function toolAskUser(input) {
   const prompt = String(input?.prompt || '').trim();
   if (!prompt) return 'Error: "prompt" is required.';
+  if (ralphRun?.active) return JSON.stringify(buildUnattendedHitlResult({ ...(input || {}), prompt }), null, 2);
   const result = await showHitlModal({ ...(input || {}), prompt });
   return JSON.stringify(result, null, 2);
 }
@@ -9665,6 +9793,7 @@ async function toolExitPlanMode(input) {
   if (!planMode) return 'Error: Plan Mode is not active. You do not need to call ExitPlanMode.';
   const plan = String(input?.plan || '').trim();
   if (!plan) return 'Error: "plan" is required and must be the full plan as Markdown.';
+  if (ralphRun?.active) return 'Error: Ralph Loop is active and cannot approve Plan Mode unattended. Continue read-only if useful, otherwise stop with a clear blocker and ask the user to disable Plan Mode or approve manually.';
   const verdict = await showPlanApprovalModal(plan);
   if (verdict.approved) {
     planMode = false;
@@ -10905,14 +11034,15 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   const mediaToolPrompt = getMediaToolPrompt();
   const pyodideNativePrompt = getPyodideNativeToolPrompt();
   const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
+  const ralphPrompt = getRalphLoopPrompt();
   const memPrompt = await getCachedMemRecallForPrompt(projectedMessagesBase, { readOnly: !!options.readOnlyMemory, memoryRecallKey: options.memoryRecallKey });
   rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });
   const anthropicTools = getEnabledToolsAnthropic();
   const openaiTools = getEnabledToolsOpenAI();
   const stableSystemPrompt = contextEditor + activeSkillMetadata;
-  const volatileSystemPrompt = triggeredSkillPrompts + mediaToolPrompt + pyodideNativePrompt + planPrompt + memPrompt;
+  const volatileSystemPrompt = triggeredSkillPrompts + mediaToolPrompt + pyodideNativePrompt + planPrompt + ralphPrompt + memPrompt;
   const systemPrompt = stableSystemPrompt + volatileSystemPrompt;
-  return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, beijingTime, runtimeReminder, mediaToolPrompt, pyodideNativePrompt, planPrompt, memPrompt, stableSystemPrompt, volatileSystemPrompt, systemPrompt, anthropicTools, openaiTools, headId };
+  return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, beijingTime, runtimeReminder, mediaToolPrompt, pyodideNativePrompt, planPrompt, ralphPrompt, memPrompt, stableSystemPrompt, volatileSystemPrompt, systemPrompt, anthropicTools, openaiTools, headId };
 }
 function buildAnthropicSystemForCache(parts) {
   const blocks = [];
@@ -11056,7 +11186,7 @@ function renderContextSnapshotUI(snapshot = lastRequestContextSnapshot) {
   if (fillEl) fillEl.style.width = pct + '%';
   const loopEl = document.getElementById('loopBadge');
   const tokenBadge = document.getElementById('tokenBadge');
-  if (loopEl) loopEl.textContent = `${t('badge.loop')}: ${loopCount}`;
+  if (loopEl) loopEl.textContent = ralphRun?.active ? `${t('badge.loop')}: ${loopCount} · Ralph: ${ralphRun.iteration}/${ralphRun.unlimited ? '∞' : ralphRun.maxIterations}` : `${t('badge.loop')}: ${loopCount}`;
   if (tokenBadge) tokenBadge.textContent = `Context: ${pct.toFixed(0)}% · Session: ${formatTokenCount(totalTokens)}`;
   renderContextBreakdown(snapshot);
 }
@@ -11521,7 +11651,7 @@ async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToo
 // ═══════════════════════════════════════════════════════════════════
 // AGENT LOOP
 // ═══════════════════════════════════════════════════════════════════
-async function agentLoop(userContent, displayText, fileList, usedSkills) {
+async function agentLoop(userContent, displayText, fileList, usedSkills, options = {}) {
   const usedSkillNames = (usedSkills || []).map(sk => sk.name).filter(Boolean);
   // on_user_submit hook: may block or rewrite the user's text
   const userTextPre = getUserTextFromContent(userContent) || displayText || '';
@@ -11542,7 +11672,7 @@ async function agentLoop(userContent, displayText, fileList, usedSkills) {
   const promptIndex = findConversationIndexByEntryId(userEntry.id);
   const userText = getUserTextFromContent(userContent) || displayText || '';
   appendUserBubble(displayText || userText, fileList, usedSkills, promptIndex, userEntry.id);
-  await _runAgentLoop(userText, { promptIndex, promptEntryId: userEntry.id, fileList });
+  await _runAgentLoop(userText, { promptIndex, promptEntryId: userEntry.id, fileList, ralph: options.ralph });
 }
 
 // Extract readable content from partial tool JSON for live preview
@@ -11620,6 +11750,13 @@ async function _runAgentLoop(userText, options = {}) {
   const tokenBase = Number.isFinite(options.tokenBase) ? options.tokenBase : totalTokens;
   const loopBase = Number.isFinite(options.loopBase) ? options.loopBase : loopCount;
   const memoryRecallKey = String(promptEntryId || stableStringHash(userText || ''));
+  const ralphOptions = normalizeRalphOptions(options.ralph);
+  if (ralphOptions.enabled) {
+    ralphRun = { active: true, originalTask: userText, promptEntryId, iteration: 0, unlimited: ralphOptions.unlimited, maxIterations: ralphOptions.maxIterations, completionMarker: ralphOptions.completionMarker, cancelled: false, stopReason: '', seenSignatures: new Map() };
+    appendSystemMsg(`Ralph Loop started: max ${ralphRun.unlimited ? '∞' : ralphRun.maxIterations} iterations, marker "${ralphRun.completionMarker}".`);
+    renderRalphButton();
+  }
+  let stoppedBy = 'done';
   abortCtrl = new AbortController();
   try {
     while (true) {
@@ -11779,12 +11916,7 @@ async function _runAgentLoop(userText, options = {}) {
       applyContextSnapshot(await buildContextSnapshot());
       updateMemoryUI();
       await runHooks('on_assistant_response', { content: result.content, loopCount, stopReason: result.stop_reason });
-      // Fire memory extraction ONCE per user turn — on the final response,
-      // not after every tool-use iteration. Cuts both cost and noise.
-      if (result.stop_reason !== 'tool_use' && memIsEnabled() && memGetSettings().autoExtract) {
-        memExtractAfterTurn({ userText, assistantContent: result.content, loopCount, convId: activeConvId })
-          .catch(e => console.warn('memExtractAfterTurn failed', e));
-      }
+      let ralphDecision = null;
       const tus = result.stream_error ? [] : result.content.filter(b => b.type === 'tool_use');
       if (tus.length) {
         const trs = [];
@@ -11839,12 +11971,47 @@ async function _runAgentLoop(userText, options = {}) {
         setStatus('running', t('status.processing'));
         scrollBottom();
       }
-      if (result.stream_error || result.stop_reason !== 'tool_use') break;
+      if (!result.stream_error && result.stop_reason !== 'tool_use' && ralphRun?.active) {
+        ralphDecision = shouldContinueRalphLoop({ result, fullText, todos, ralphRun });
+      }
+      const willRalphContinue = !!ralphDecision?.continue;
+      // Fire memory extraction ONCE per user turn — on the final response,
+      // not after every tool-use or Ralph continuation iteration. Cuts both cost and noise.
+      if (!willRalphContinue && result.stop_reason !== 'tool_use' && memIsEnabled() && memGetSettings().autoExtract) {
+        memExtractAfterTurn({ userText, assistantContent: result.content, loopCount, convId: activeConvId })
+          .catch(e => console.warn('memExtractAfterTurn failed', e));
+      }
+      if (result.stream_error) {
+        if (ralphRun?.active) ralphRun.stopReason = 'stream error';
+        break;
+      }
+      if (result.stop_reason === 'tool_use') continue;
+      if (ralphRun?.active) {
+        if (!ralphDecision) ralphDecision = shouldContinueRalphLoop({ result, fullText, todos, ralphRun });
+        if (!ralphDecision.continue) {
+          ralphRun.stopReason = ralphDecision.reason;
+          appendSystemMsg(`Ralph Loop stopped: ${ralphDecision.reason}.`);
+          break;
+        }
+        ralphRun.iteration++;
+        appendRalphContinuationMessage({ ralphRun, lastAssistantText: fullText });
+        renderRalphButton();
+        updateMemoryUI();
+        setStatus('running', `Ralph ${ralphRun.iteration}/${ralphRun.unlimited ? '∞' : ralphRun.maxIterations}`);
+        scrollBottom();
+        continue;
+      }
+      break;
     }
-  } catch (e) { if (e.name !== 'AbortError') appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); }
+  } catch (e) {
+    if (e.name === 'AbortError') stoppedBy = 'abort';
+    else appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase });
+  }
   finally {
-    isGenerating = false; abortCtrl = null; updateButtons(); setStatus('ready', t('status.ready')); updateMemoryUI(); saveCurrentConv(true);
-    try { await runHooks('on_stop', { loopCount, totalTokens, stoppedBy: abortCtrl === null ? 'done' : 'abort' }); } catch {}
+    const ralphSummary = ralphRun?.active ? { active: true, iteration: ralphRun.iteration, unlimited: ralphRun.unlimited, maxIterations: ralphRun.maxIterations, completionMarker: ralphRun.completionMarker, stopReason: ralphRun.stopReason || (stoppedBy === 'abort' ? 'abort' : 'done') } : undefined;
+    ralphRun = null;
+    isGenerating = false; abortCtrl = null; updateButtons(); setStatus('ready', t('status.ready')); renderRalphButton(); updateMemoryUI(); saveCurrentConv(true);
+    try { await runHooks('on_stop', { loopCount, totalTokens, stoppedBy, ralph: ralphSummary }); } catch {}
   }
 }
 
@@ -12877,13 +13044,15 @@ async function handleSend() {
   invokedSkills = [];
   renderChips();
   const msgContent = await buildUserMessageContent(text, sentFiles, usedSkills);
-  agentLoop(msgContent, text, sentFiles, usedSkills);
+  const ralphSettings = getRalphSettings();
+  const ralph = ralphModeEnabled ? { enabled: true, unlimited: ralphSettings.unlimited, maxIterations: ralphSettings.maxIterations, completionMarker: ralphSettings.completionMarker } : null;
+  agentLoop(msgContent, text, sentFiles, usedSkills, { ralph });
 }
 
 function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }
 function updateButtons() {
   const btn = document.getElementById('sendBtn');
-  if (isGenerating) { btn.innerHTML = '\u25A0'; btn.classList.add('stop'); btn.onclick = () => { if (abortCtrl) abortCtrl.abort(); }; }
+  if (isGenerating) { btn.innerHTML = '\u25A0'; btn.classList.add('stop'); btn.onclick = () => { if (ralphRun?.active) ralphRun.cancelled = true; if (abortCtrl) abortCtrl.abort(); }; }
   else { btn.innerHTML = '\u25B6'; btn.classList.remove('stop'); btn.onclick = handleSend; }
   document.getElementById('userInput').disabled = isGenerating;
 }
@@ -13144,6 +13313,7 @@ marked.setOptions({ gfm: true, breaks: true });
   renderHooks();
   renderTodos();
   renderSubAgents();
+  renderRalphButton();
   renderMemoryButton();
   if (memIsEnabled()) { memLoadCache().catch(e => console.warn('Memory cache preload failed', e)); }
   // Connect MCP servers in the background — don't block UI startup on a slow
