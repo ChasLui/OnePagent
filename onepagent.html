@@ -2822,61 +2822,9 @@ document.getElementById('modelSelect').addEventListener('change', e => {
 populateProviderSelect();
 populateModelSelectFromActiveProvider();
 
-// ── Service Worker (inline) ─────────────────────────────────────
-const SW_SRC = `
-self.addEventListener('message', e => {
-  if (e.data.type === 'SET_CONFIG') self._cfg = e.data;
-});
-self.addEventListener('fetch', e => {
-  const cfg = self._cfg;
-  if (!cfg) return;
-  const apiBase = (cfg.api_endpoint || '').replace(/\/+$/, '');
-  const u = new URL(e.request.url);
-  // Intercept LLM API calls
-  if (u.pathname.includes('/v1/messages') || u.pathname.includes('/v1/chat/completions') || u.pathname.includes('/v1/models') || u.pathname.includes('/v1/images/') || u.pathname.includes('/v1/videos/')) {
-    e.respondWith((async () => {
-      const h = new Headers(e.request.headers);
-      const targetUrl = apiBase ? (apiBase + u.pathname + u.search) : e.request.url;
-      if (cfg.provider === 'anthropic_compat') {
-        h.set('x-api-key', cfg.api_key);
-        h.set('anthropic-version', '2023-06-01');
-        h.set('anthropic-dangerous-direct-browser-access', 'true');
-      } else {
-        h.set('Authorization', 'Bearer ' + cfg.api_key);
-      }
-      return fetch(new Request(targetUrl, { method: e.request.method, headers: h, body: (e.request.method === 'GET' || e.request.method === 'HEAD') ? undefined : await e.request.clone().arrayBuffer() }));
-    })());
-  }
-  // Intercept Tavily calls
-  if (u.hostname === 'api.tavily.com') {
-    e.respondWith((async () => {
-      const body = await e.request.json();
-      body.api_key = cfg.tavily_api_key;
-      return fetch(e.request.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    })());
-  }
-});
-`;
-
+// ── Service Worker ──────────────────────────────────────────────
 async function initServiceWorker(keys) {
-  if (!('serviceWorker' in navigator)) return false;
-  // SW requires HTTPS or localhost — skip on plain HTTP to avoid errors
-  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return false;
-  try {
-    const blob = new Blob([SW_SRC], { type: 'application/javascript' });
-    const reg = await navigator.serviceWorker.register(URL.createObjectURL(blob), { scope: location.pathname });
-    const sw = reg.active || await new Promise((resolve, reject) => {
-      const w = reg.installing || reg.waiting;
-      if (!w) return reject(new Error('No SW installing'));
-      w.addEventListener('statechange', () => { if (w.state === 'activated') resolve(w); });
-      setTimeout(() => reject(new Error('SW activation timeout')), 5000);
-    });
-    sw.postMessage({ type: 'SET_CONFIG', api_key: keys.api_key, tavily_api_key: keys.tavily_api_key, provider: PROVIDER, api_endpoint: keys.api_endpoint });
-    return true;
-  } catch (e) {
-    console.warn('Service Worker registration failed, using direct fetch fallback:', e);
-    return false;
-  }
+  return false;
 }
 
 // ── LLM URL + auth helpers ──────────────────────────────────────
@@ -4081,19 +4029,30 @@ function _wcNativePath(path, fallback = '/') {
   }
   return '/' + out.join('/');
 }
+function _wcProjectPath(path) {
+  const p = _wcNativePath(path, '/');
+  return p === '/' ? '.' : p.slice(1);
+}
+function _wcRelativePath(fromDir, toPath) {
+  const from = _wcNativePath(fromDir, '/').split('/').filter(Boolean);
+  const to = _wcNativePath(toPath, '/').split('/').filter(Boolean);
+  while (from.length && to.length && from[0] === to[0]) { from.shift(); to.shift(); }
+  const rel = [...from.map(() => '..'), ...to].join('/') || '.';
+  return rel.startsWith('.') ? rel : './' + rel;
+}
 
 async function _wcEnsureDir(wc, path) {
   path = _wcNativePath(path, '/');
   if (path === '/') return;
-  try { await wc.fs.mkdir(path, { recursive: true }); } catch (e) {
+  try { await wc.fs.mkdir(_wcProjectPath(path), { recursive: true }); } catch (e) {
     if (!/exist|EEXIST/i.test(String(e?.message || e))) throw e;
   }
 }
 
 async function _wcExists(wc, path) {
   path = _wcNativePath(path, '/');
-  try { await wc.fs.readdir(path); return { exists: true, type: 'dir' }; } catch {}
-  try { await wc.fs.readFile(path); return { exists: true, type: 'file' }; } catch {}
+  try { await wc.fs.readdir(_wcProjectPath(path)); return { exists: true, type: 'dir' }; } catch {}
+  try { await wc.fs.readFile(_wcProjectPath(path)); return { exists: true, type: 'file' }; } catch {}
   return { exists: false, type: null };
 }
 
@@ -4102,12 +4061,12 @@ async function _wcWriteFile(wc, path, file, overwrite = true) {
   const existing = await _wcExists(wc, path);
   if (existing.exists && !overwrite) throw new Error(`WebContainer path exists: ${path}`);
   await _wcEnsureDir(wc, _pathDirName(path));
-  await wc.fs.writeFile(path, file.binary ? file.bytes : file.content);
+  await wc.fs.writeFile(_wcProjectPath(path), file.binary ? file.bytes : file.content);
 }
 
 async function _wcReadFile(wc, path, binary) {
   path = _wcNativePath(path, '/');
-  const data = await wc.fs.readFile(path, binary ? undefined : 'utf-8');
+  const data = await wc.fs.readFile(_wcProjectPath(path), binary ? undefined : 'utf-8');
   if (binary) return data instanceof Uint8Array ? data : new Uint8Array(data);
   return typeof data === 'string' ? data : new TextDecoder().decode(data);
 }
@@ -4146,7 +4105,7 @@ async function _collectWebContainerFiles(wc, source, binaryOverride = null, opti
   const out = [];
   async function walk(path, rel) {
     let entries;
-    try { entries = await wc.fs.readdir(path, { withFileTypes: true }); } catch {
+    try { entries = await wc.fs.readdir(_wcProjectPath(path), { withFileTypes: true }); } catch {
       const binary = binaryOverride == null ? _isBinaryPathByExt(path) : !!binaryOverride;
       const data = await _wcReadFile(wc, path, binary);
       out.push({ path, rel: rel || _pathBaseName(path), binary, bytes: binary ? data : undefined, content: binary ? undefined : data, size: binary ? data.length : data.length });
@@ -5416,10 +5375,12 @@ async function toolNodeExec(input) {
       await _wcWriteFile(wc, scriptPath, { binary: false, content: input.code }, true);
     }
     const args = Array.isArray(input.args) ? input.args.map(String) : [];
-    const cwd = _wcNativePath(input.cwd || '/', '/');
+    const cwdPath = _wcNativePath(input.cwd || '/', '/');
+    const cwd = _wcProjectPath(cwdPath);
+    const scriptArg = _wcRelativePath(cwdPath, scriptPath);
     const env = input.env && typeof input.env === 'object' ? Object.fromEntries(Object.entries(input.env).map(([k, v]) => [String(k), String(v)])) : undefined;
-    const command = ['node', scriptPath, ...args];
-    const proc = await wc.spawn('node', [scriptPath, ...args], { cwd, ...(env ? { env } : {}) });
+    const command = ['node', scriptArg, ...args];
+    const proc = await wc.spawn('node', [scriptArg, ...args], { cwd, ...(env ? { env } : {}) });
     const outputPromise = _collectWebContainerProcessOutput(proc);
     let timedOut = false;
     const exitPromise = proc.exit;
