@@ -951,6 +951,13 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 #planModalBody table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 11px; }
 #planModalBody th, #planModalBody td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
 #planModalBody th { background: var(--overlay-med); font-weight: 600; }
+#hitlModalPrompt { padding: 12px 14px; background: var(--bg-root); border: 1px solid var(--border); border-radius: 5px; margin-bottom: 12px; font-size: 13px; line-height: 1.55; color: var(--text-primary); white-space: pre-wrap; }
+#hitlModalContext { display: none; margin-bottom: 12px; padding: 10px 12px; background: var(--overlay-soft); border: 1px solid var(--overlay-line); border-radius: 5px; font-size: 11px; line-height: 1.5; color: var(--text-secondary); white-space: pre-wrap; }
+#hitlModalChoices { display: none; margin-bottom: 12px; }
+.hitl-choice { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; margin-bottom: 6px; background: var(--bg-root); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; font-size: 12px; color: var(--text-primary); line-height: 1.45; }
+.hitl-choice:hover { border-color: var(--accent-orange); }
+.hitl-choice input { width: auto; margin: 2px 0 0; flex-shrink: 0; }
+#hitlModalStatus { min-height: 14px; margin: -4px 0 8px; font-size: 10px; color: var(--accent-red); }
 .skill-file-drop { padding: 24px; border: 2px dashed var(--border); border-radius: 8px; text-align: center; cursor: pointer; font-size: 12px; color: var(--text-dim); position: relative; margin-bottom: 12px; transition: all 0.2s; }
 .skill-file-drop:hover,.skill-file-drop.dragover { border-color: var(--accent-cyan); color: var(--text-secondary); }
 .skill-file-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
@@ -1681,6 +1688,28 @@ document.addEventListener('DOMContentLoaded', function() {
   </div>
 </div>
 
+<!-- Human-in-the-loop Modal -->
+<div class="modal-overlay" id="hitlModal">
+  <div class="modal" style="width:clamp(320px,92vw,600px)">
+    <div class="modal-header">
+      <h3><svg class="ui-icon" aria-hidden="true"><use href="#i-message-circle"></use></svg> <span data-i18n="hitlModal.title">Input Requested</span></h3>
+      <button class="modal-close" onclick="cancelHitlModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="hitlModalPrompt"></div>
+      <div id="hitlModalContext"></div>
+      <div id="hitlModalChoices"></div>
+      <label id="hitlModalResponseLabel" for="hitlModalResponse" data-i18n="hitlModal.response">Response</label>
+      <textarea id="hitlModalResponse" placeholder="Type your answer..." data-i18n-placeholder="hitlModal.responsePh"></textarea>
+      <div id="hitlModalStatus"></div>
+      <div id="hitlModalActions" style="display:flex;gap:8px;margin-top:8px">
+        <button id="hitlModalSubmit" class="modal-btn primary" onclick="submitHitlModal()" style="flex:1"><svg class="ui-icon" aria-hidden="true"><use href="#i-check"></use></svg> <span data-i18n="hitlModal.submit">Submit</span></button>
+        <button class="modal-btn secondary" onclick="cancelHitlModal()" style="flex:1" data-i18n="modal.cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Hook Editor Modal -->
 <div class="modal-overlay" id="hookModal">
   <div class="modal">
@@ -2073,6 +2102,16 @@ const I18N = {
     'planModal.approve': 'Approve & Execute',
     'planModal.reject': 'Reject & Revise',
     'planModal.note': 'Approve turns Plan Mode off and lets the agent execute write tools. Reject keeps Plan Mode on and returns your feedback so the agent can revise.',
+    // Human-in-the-loop modal
+    'hitlModal.title': 'Input Requested',
+    'hitlModal.response': 'Response',
+    'hitlModal.responsePh': 'Type your answer...',
+    'hitlModal.custom': 'Custom response',
+    'hitlModal.submit': 'Submit',
+    'hitlModal.yes': 'Yes',
+    'hitlModal.no': 'No',
+    'hitlModal.cancelled': 'User cancelled the request.',
+    'hitlModal.required': 'Please provide a response or select an option.',
     // Hook editor modal
     'hookModal.addTitle': 'Add Hook',
     'hookModal.editTitle': 'Edit Hook',
@@ -2364,6 +2403,16 @@ const I18N = {
     'planModal.approve': '批准并执行',
     'planModal.reject': '拒绝并修订',
     'planModal.note': '批准会关闭计划模式并允许 Agent 调用写入工具。拒绝保留计划模式并返回你的反馈供 Agent 修订。',
+    // Human-in-the-loop modal
+    'hitlModal.title': '需要用户输入',
+    'hitlModal.response': '回复',
+    'hitlModal.responsePh': '输入你的回答...',
+    'hitlModal.custom': '自定义回复',
+    'hitlModal.submit': '提交',
+    'hitlModal.yes': '是',
+    'hitlModal.no': '否',
+    'hitlModal.cancelled': '用户取消了请求。',
+    'hitlModal.required': '请提供回复或选择一个选项。',
     // Hook editor modal
     'hookModal.addTitle': '添加钩子',
     'hookModal.editTitle': '编辑钩子',
@@ -2965,6 +3014,7 @@ Available tools:
 - PythonExec: Run Python code in-browser (Pyodide WASM). Python file APIs are bridged to the shared browser filesystem through a workspacefs layer, so normal paths like /src/main.py and /skills/my-skill/SKILL.md work directly without full filesystem sync. For libraries that require a native temp path, use workspacefs.materialize_to_tmp(...) and workspacefs.persist_tmp_file(...). Use micropip only for pure-Python packages. An internal helper module \`workspace_cli\` and a ready-to-run script at \`/__internal__/workspace_cli.py\` are also available for higher-level file operations.
 - JSExec: Run JavaScript in browser sandbox. Use vfsRead/vfsWrite for text files, vfsReadBinary/vfsWriteBinary for binary files, vfsStat for metadata, console.log() for output, fetch() for HTTP. JSExec is not Node.
 - NodeExec: Run Node.js-compatible JavaScript/scripts in a browser WebContainer. Use when Node APIs or Node runtime behavior are required. WebContainers require HTTPS/localhost and cross-origin isolation. NodeExec uses a separate WebContainer filesystem: pass explicit sync_in paths to copy VFS files in, and sync_out paths to copy generated outputs back.
+- AskUser: Pause the loop to ask the user for clarification, suggestions, confirmation, or a choice before continuing.
 - WebSearch: Search the web via Tavily AI. Returns titles, URLs and content snippets. Requires a Tavily API key set in the Web Search panel (right sidebar).
 
 Filesystem rules:
@@ -8073,6 +8123,126 @@ function rejectPlan() {
   _closePlanModal({ approved: false, feedback: (fb?.value || '').trim() });
 }
 
+let _hitlModalResolver = null;
+let _hitlModalState = null;
+
+function _normalizeHitlInput(input) {
+  input = input && typeof input === 'object' ? input : {};
+  let mode = ['text', 'choice', 'confirm'].includes(input.mode) ? input.mode : 'text';
+  const choices = Array.isArray(input.choices) ? input.choices.map(String).map(s => s.trim()).filter(Boolean).slice(0, 12) : [];
+  if (mode === 'choice' && !choices.length) mode = 'text';
+  return {
+    mode,
+    prompt: String(input.prompt || '').trim(),
+    context: String(input.context || '').trim(),
+    choices,
+    defaultChoice: String(input.default_choice || '').trim(),
+    allowCustom: input.allow_custom === true
+  };
+}
+
+function showHitlModal(input) {
+  const state = _normalizeHitlInput(input);
+  return new Promise(resolve => {
+    _hitlModalResolver = resolve;
+    _hitlModalState = state;
+    const overlay = document.getElementById('hitlModal');
+    const promptEl = document.getElementById('hitlModalPrompt');
+    const contextEl = document.getElementById('hitlModalContext');
+    const choicesEl = document.getElementById('hitlModalChoices');
+    const responseEl = document.getElementById('hitlModalResponse');
+    const labelEl = document.getElementById('hitlModalResponseLabel');
+    const submitEl = document.getElementById('hitlModalSubmit');
+    const statusEl = document.getElementById('hitlModalStatus');
+    if (!overlay || !promptEl || !contextEl || !choicesEl || !responseEl || !labelEl || !submitEl || !statusEl) {
+      _hitlModalResolver = null;
+      _hitlModalState = null;
+      resolve({ status: 'cancelled', mode: state.mode, answer: '' });
+      return;
+    }
+    promptEl.textContent = state.prompt;
+    contextEl.textContent = state.context;
+    contextEl.style.display = state.context ? '' : 'none';
+    responseEl.value = state.mode === 'text' ? state.defaultChoice : '';
+    responseEl.placeholder = t('hitlModal.responsePh');
+    statusEl.textContent = '';
+    choicesEl.innerHTML = '';
+    choicesEl.style.display = state.mode === 'choice' || state.mode === 'confirm' ? '' : 'none';
+    labelEl.style.display = state.mode === 'confirm' ? 'none' : '';
+    responseEl.style.display = state.mode === 'confirm' ? 'none' : '';
+    submitEl.style.display = state.mode === 'confirm' ? 'none' : '';
+
+    if (state.mode === 'choice') {
+      for (const [i, choice] of state.choices.entries()) {
+        const id = `hitlChoice${i}`;
+        const label = document.createElement('label');
+        label.className = 'hitl-choice';
+        label.innerHTML = `<input type="radio" name="hitlChoice" id="${id}" value="${i}"><span></span>`;
+        label.querySelector('span').textContent = choice;
+        choicesEl.appendChild(label);
+        if (state.defaultChoice && choice === state.defaultChoice) label.querySelector('input').checked = true;
+      }
+      labelEl.textContent = t('hitlModal.custom');
+      labelEl.style.display = state.allowCustom ? '' : 'none';
+      responseEl.style.display = state.allowCustom ? '' : 'none';
+      responseEl.value = state.allowCustom && state.defaultChoice && !state.choices.includes(state.defaultChoice) ? state.defaultChoice : '';
+    } else if (state.mode === 'confirm') {
+      const yes = document.createElement('button');
+      const no = document.createElement('button');
+      yes.className = 'modal-btn primary';
+      no.className = 'modal-btn secondary';
+      yes.style.marginRight = '8px';
+      yes.textContent = t('hitlModal.yes');
+      no.textContent = t('hitlModal.no');
+      yes.onclick = () => _closeHitlModal({ status: 'answered', mode: 'confirm', confirmed: true, answer: 'yes' });
+      no.onclick = () => _closeHitlModal({ status: 'answered', mode: 'confirm', confirmed: false, answer: 'no' });
+      choicesEl.appendChild(yes);
+      choicesEl.appendChild(no);
+    } else {
+      labelEl.textContent = t('hitlModal.response');
+    }
+    overlay.classList.add('show');
+    setTimeout(() => { if (responseEl.style.display !== 'none') responseEl.focus(); }, 0);
+  });
+}
+
+function _closeHitlModal(result) {
+  const overlay = document.getElementById('hitlModal');
+  if (overlay) overlay.classList.remove('show');
+  if (_hitlModalResolver) _hitlModalResolver(result);
+  _hitlModalResolver = null;
+  _hitlModalState = null;
+}
+
+function submitHitlModal() {
+  const state = _hitlModalState;
+  if (!state) return;
+  const responseEl = document.getElementById('hitlModalResponse');
+  const statusEl = document.getElementById('hitlModalStatus');
+  const custom = (responseEl?.value || '').trim();
+  if (state.mode === 'choice') {
+    const selected = document.querySelector('input[name="hitlChoice"]:checked');
+    if (selected) {
+      const idx = Number(selected.value);
+      _closeHitlModal({ status: 'answered', mode: 'choice', answer: state.choices[idx], choice_index: idx, custom: false });
+      return;
+    }
+    if (state.allowCustom && custom) {
+      _closeHitlModal({ status: 'answered', mode: 'choice', answer: custom, choice_index: null, custom: true });
+      return;
+    }
+  } else if (custom || state.defaultChoice) {
+    _closeHitlModal({ status: 'answered', mode: 'text', answer: custom || state.defaultChoice });
+    return;
+  }
+  if (statusEl) statusEl.textContent = t('hitlModal.required');
+}
+
+function cancelHitlModal() {
+  const mode = _hitlModalState?.mode || 'text';
+  _closeHitlModal({ status: 'cancelled', mode, answer: '' });
+}
+
 function addMcpTool() {
   const name = document.getElementById('mcpToolName').value.trim();
   if (!name) { alert('Tool name is required'); return; }
@@ -8939,6 +9109,7 @@ const BASE_TOOLS_ANTHROPIC = [
   { name: 'GenerateImage', description: 'Generate an image from a text prompt, or edit/transform attached images when input_image_paths is provided. Use this directly in normal chat when the user asks for image generation; no special mode switch is required. The prompt must be a complete, polished generation prompt synthesized from the user\'s latest request plus relevant conversation history, not just a verbatim copy of the last message. Saves outputs under /generations and returns generated file paths.', input_schema: { type: 'object', properties: { prompt: { type: 'string', description: 'Complete image prompt or edit instruction, incorporating relevant user requirements and conversation context.' }, input_image_paths: { type: 'array', items: { type: 'string' }, description: 'Optional VFS image paths to use for image-to-image editing or variation.' }, model: { type: 'string', description: 'Optional image model override. Defaults to the provider default image model.' } }, required: ['prompt'] } },
   { name: 'GenerateVideo', description: 'Generate a video from a text prompt, or from an attached image plus prompt when input_image_paths is provided. Use this directly in normal chat when the user asks for video generation; no special mode switch is required. The prompt must be a complete, polished generation prompt synthesized from the user\'s latest request plus relevant conversation history, not just a verbatim copy of the last message. Saves outputs under /generations and returns generated file paths.', input_schema: { type: 'object', properties: { prompt: { type: 'string', description: 'Complete video prompt or animation instruction, incorporating relevant user requirements and conversation context.' }, input_image_paths: { type: 'array', items: { type: 'string' }, description: 'Optional VFS image paths; the first valid image is used for image-to-video.' }, model: { type: 'string', description: 'Optional video model override. Defaults to the provider default video model.' } }, required: ['prompt'] } },
   { name: 'TodoWrite', description: 'Maintain a user-visible task list for the current session. Use this proactively on multi-step work so the user can track progress. Each todo has: content (imperative form, e.g. "Run tests"), activeForm (present continuous, e.g. "Running tests"), status (pending | in_progress | completed). Exactly one task should be in_progress at a time. Update the full list on every change; this tool overwrites the prior list.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { content: { type: 'string', description: 'Imperative description of the task.' }, activeForm: { type: 'string', description: 'Present-continuous description shown while in progress.' }, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: 'Task status.' } }, required: ['content', 'activeForm', 'status'] } } }, required: ['todos'] } },
+  { name: 'AskUser', description: 'Ask the user for clarification, suggestions, confirmation, or a choice before continuing. Use this when user input is needed to make a decision, resolve ambiguity, or get approval for a non-plan-mode step. This pauses the agent loop until the user responds.', input_schema: { type: 'object', properties: { prompt: { type: 'string', description: 'The question or request to show to the user. Be concise and include enough context for the user to answer.' }, mode: { type: 'string', enum: ['text', 'choice', 'confirm'], description: 'Input mode. text asks for freeform input, choice asks the user to select one option, confirm asks for yes/no. Defaults to text.' }, choices: { type: 'array', items: { type: 'string' }, description: 'Options to show when mode is choice. Use short, distinct labels.' }, default_choice: { type: 'string', description: 'Optional default choice or suggested answer.' }, allow_custom: { type: 'boolean', description: 'For choice mode, whether the user may provide a custom response instead of selecting one of the choices. Defaults to false.' }, context: { type: 'string', description: 'Optional additional background to display below the main prompt.' } }, required: ['prompt'] } },
   { name: 'ExitPlanMode', description: 'Call this ONLY while Plan Mode is active and your plan is ready for user approval. Pass the full plan as Markdown. The user gets an Approve/Reject dialog. If approved, Plan Mode exits and you may execute write tools on the next turn. If rejected, you receive the user\'s feedback and must revise the plan while staying in Plan Mode.', input_schema: { type: 'object', properties: { plan: { type: 'string', description: 'Complete, reviewable plan in Markdown.' } }, required: ['plan'] } },
 ];
 
@@ -9096,7 +9267,7 @@ function rebuildToolDefs(headId = activeEntryId, options = {}) {
 }
 
 function renderToolsGrid() {
-  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', NodeExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', GenerateImage: 'i:image', GenerateVideo: 'i:film' };
+  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', NodeExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', GenerateImage: 'i:image', GenerateVideo: 'i:film', AskUser: 'i:message-circle' };
   const el = document.getElementById('toolsGrid');
   el.innerHTML = allToolsAnthropic.map(t => {
     const ic = icons[t.name] || 'i:wrench';
@@ -9113,7 +9284,7 @@ const PLAN_MODE_WRITE_TOOLS = new Set(['Write', 'Edit', 'Bash', 'PythonExec', 'V
 
 async function executeTool(name, input) {
   try {
-    if (planMode && name !== 'ExitPlanMode' && name !== 'TodoWrite') {
+    if (planMode && name !== 'ExitPlanMode' && name !== 'TodoWrite' && name !== 'AskUser') {
       const isMcp = mcpTools.find(t => t.name === name);
       if (PLAN_MODE_WRITE_TOOLS.has(name) || isMcp) {
         return `Error: Plan Mode is active. The tool "${name}" is blocked. Finish gathering information with read-only tools (Read / Glob / Grep / WebSearch / Fetch) and call ExitPlanMode when your plan is ready for user approval.`;
@@ -9138,6 +9309,7 @@ async function executeTool(name, input) {
       case 'GenerateImage': return hasConfiguredDefaultMediaModel('image') ? await toolGenerateImage(input) : `Error: ${t('media.noModel')}`;
       case 'GenerateVideo': return hasConfiguredDefaultMediaModel('video') ? await toolGenerateVideo(input) : `Error: ${t('media.noModel')}`;
       case 'TodoWrite': return toolTodoWrite(input);
+      case 'AskUser': return await toolAskUser(input);
       case 'ExitPlanMode': return await toolExitPlanMode(input);
       case 'memory_save': return await toolMemorySave(input);
       case 'memory_search': return await toolMemorySearch(input);
@@ -9273,6 +9445,13 @@ async function toolFetch(input) {
   } catch (e) {
     return `Fetch error: ${e.message}`;
   }
+}
+
+async function toolAskUser(input) {
+  const prompt = String(input?.prompt || '').trim();
+  if (!prompt) return 'Error: "prompt" is required.';
+  const result = await showHitlModal({ ...(input || {}), prompt });
+  return JSON.stringify(result, null, 2);
 }
 
 function toolTodoWrite(input) {
@@ -11663,7 +11842,7 @@ async function appendMediaResultOnly(msgEl, out) {
 function appendToolCard(msgEl, tu, out, isErr, existingEl = null) {
   const c = existingEl || document.createElement('div');
   c.className = 'tool-card' + (isErr ? ' error' : '');
-  const sum = { Read: tu.input.file_path, Write: tu.input.file_path, Edit: tu.input.file_path, Glob: tu.input.pattern, Grep: tu.input.pattern, Bash: tu.input.command, PythonExec: (tu.input.code||'').slice(0,60), JSExec: (tu.input.code||'').slice(0,60), NodeExec: tu.input.script_path || (tu.input.code||'').slice(0,60), GenerateImage: tu.input.prompt, GenerateVideo: tu.input.prompt }[tu.name] || '';
+  const sum = { Read: tu.input.file_path, Write: tu.input.file_path, Edit: tu.input.file_path, Glob: tu.input.pattern, Grep: tu.input.pattern, Bash: tu.input.command, PythonExec: (tu.input.code||'').slice(0,60), JSExec: (tu.input.code||'').slice(0,60), NodeExec: tu.input.script_path || (tu.input.code||'').slice(0,60), GenerateImage: tu.input.prompt, GenerateVideo: tu.input.prompt, AskUser: tu.input.prompt }[tu.name] || '';
   const supportsCollapse = tu.name === 'Write' || tu.name === 'Edit' || tu.name === 'PythonExec' || tu.name === 'JSExec' || tu.name === 'NodeExec';
   const mediaResult = !isErr && parseMediaToolResult(out);
   const displayOut = mediaResult ? stripMediaToolMarker(out) : out;
