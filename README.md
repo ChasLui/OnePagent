@@ -44,6 +44,9 @@ Open one HTML file and you get a fully-featured, internet-aware, programmable, e
 | Long-term memory | Opt-in persistent facts / preferences / events / skills across sessions — auto-extraction, agent tools, manual CRUD, tag & keyword search |
 | MCP Servers | Paste `mcpServers` JSON to import (`streamable_http` / `sse`), Bearer auth, optional CORS proxy |
 | Plan Mode | Agent investigates with read-only tools, drafts a Markdown plan for approval, then executes |
+| Ralph Loop | Fully unattended continue-until-done mode with marker, max/unlimited iterations, Stop, and no-progress guard |
+| Sub-agents | Delegate bounded read-only research tasks and monitor runs in the side panel |
+| Human-in-the-loop | Agent can ask for text, choices, or confirmations when a task needs user input |
 | TodoWrite | Agent maintains a visible task list (pending / in-progress / completed) |
 | Hooks | User-defined JS handlers on 6 agent lifecycle events |
 | Python sandbox | Execute Python in-browser via Pyodide |
@@ -132,47 +135,50 @@ OnePagent is a pure static site — runs on any static host:
 
 ## Cloud Sync
 
-Back up and sync across devices via any S3-compatible bucket. **No OnePagent server involved.**
+Back up and sync across devices via any S3-compatible bucket. Configure it in **Settings → Cloud Sync**.
 
-- Supports AWS S3 / Cloudflare R2 / Backblaze B2 / MinIO
-- SHA-256 content-addressed, incremental sync, binary dedup
-- Optional AES-256-GCM end-to-end encryption (PBKDF2-SHA256 / 200k iterations)
-- LLM keys are never synced — always device-local
+- Supports AWS S3, Cloudflare R2, Backblaze B2, and MinIO.
+- Incremental, content-addressed sync with optional AES-256-GCM encryption.
+- LLM keys stay device-local and are never synced.
 
-Setup: **Settings, Cloud Sync** — fill in Endpoint / Region / Bucket / Credentials — Test connection — Push now.
+---
 
-| Backend | Endpoint | Region | Path-style |
-|---|---|---|---|
-| AWS S3 | `https://s3.<region>.amazonaws.com` | real region | recommended |
-| Cloudflare R2 | `https://<account_id>.r2.cloudflarestorage.com` | `auto` | required |
-| MinIO | `https://<your-host>` | custom | required |
-| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | e.g. `us-west-002` | required |
+## Ralph Loop
+
+Ralph Loop keeps the agent working after a normal response ends. Turn on **Ralph**, send a task, and OnePagent will re-enter it until it sees the completion marker or a guard stops the run.
+
+- Configure defaults in **Settings → Ralph Loop**: max iterations, **Unlimited**, and completion marker (default `RALPH_DONE`).
+- Use the top-bar **Stop** button to cancel a run.
+- `AskUser` uses defaults or cancels instead of opening a modal; Plan Mode is never auto-approved.
+
+Example: `Audit this page, fix what you can, and when finished include RALPH_DONE.`
 
 ---
 
 ## Memory
 
-Long-term memory persists across conversations — distinct from context compaction (which compresses the current chat window). This layer stores **reusable facts that survive across sessions**.
+Long-term memory stores reusable facts across conversations. Enable it in **Settings → Memory**.
 
-> **Formula**: Memory = Information + Time Label + Searchable Relationships (tags)
+- Stores `fact` / `preference` / `event` / `skill` / `note` records in IndexedDB.
+- Optional auto-extraction keeps durable facts after assistant turns.
+- Recall uses recency, tags, keywords, and prompt caching.
+- Tools: `memory_save`, `memory_search`, `memory_update`, `memory_forget`.
+- Memory Viewer supports search, filters, JSON import/export, and retired records.
 
-- **Storage**: dedicated IndexedDB (`ba_memories`), included in Cloud Sync incremental push
-- **Off by default**: enable at **Settings → Memory**; auto-extraction can be toggled independently
-- **Five types**: `fact` / `preference` / `event` / `skill` / `note`
-- **Three sources**: `auto` (LLM-extracted) / `tool` (agent-called) / `manual` (user-added)
-- **Auto-extraction**: one lightweight LLM pass after each assistant turn keeps only durable facts; dedicated extraction model supported
-- **Recall**: ranked by **recency + tag overlap + keyword match**, Top-N (configurable, default 8) injected into the system prompt
-- **Agent tools**: `memory_save` / `memory_search` / `memory_update` / `memory_forget`, with `supersedesIds` so new memories retire outdated ones
-- **Memory Viewer**: opens from the top bar — search, filter by type / source, tag chips, JSON import & export, show retired records
-- **Retire, don't delete**: superseded records are kept for history and simply excluded from recall
+---
+
+## Agent Workflow
+
+- **Sub-agents**: the main agent can spawn bounded read-only research workers; runs and previews appear in the side panel.
+- **Human-in-the-loop**: `AskUser` supports text, choices, and confirmations for decisions the model should not guess.
+- **Media tools**: image/video generation is explicit through tools and configured generation models, not automatic after every turn.
+- **Diagnostics**: file-system diagnostics live in **Settings → Diagnostics**.
 
 ---
 
 ## Configuration
 
-All configuration and conversation data lives in the browser (`localStorage` + `IndexedDB`). Nothing is uploaded to any third-party server.
-
-**Privacy Model**: Browser, Service Worker injects key, your configured API endpoint. OnePagent itself has no server.
+All settings and conversations live in the browser (`localStorage` + `IndexedDB`). OnePagent has no server; requests go from your browser to your configured API endpoint.
 
 ---
 
