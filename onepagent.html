@@ -3721,8 +3721,8 @@ function buildConversationTitleRequestBody(firstQuestion) {
   const system = 'You generate concise chat titles. Use the same language as the user question. Return only the title, no quotes, no punctuation-only ending, no explanation.';
   const request = `Create a short title for this first user question. For Chinese, use 4-12 Chinese characters; otherwise use 3-8 words.\n\n${firstQuestion}`;
   return PROVIDER === 'anthropic_compat'
-    ? { model: API_MODEL, max_tokens: 32, system, messages: [{ role: 'user', content: request }], stream: false }
-    : { model: API_MODEL, max_tokens: 32, temperature: 0.2, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: request }] };
+    ? { model: API_MODEL, system, messages: [{ role: 'user', content: request }] }
+    : { model: API_MODEL, temperature: 0.2, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: request }] };
 }
 
 function extractTitleTextFromLLMResponse(data) {
@@ -3738,13 +3738,25 @@ async function generateConversationTitleWithAI(firstQuestion) {
   if (!String(firstQuestion || '').trim()) return '';
   try {
     const resp = await sendLLMRequestBody(buildConversationTitleRequestBody(firstQuestion));
-    if (!resp.ok) return '';
+    if (!resp.ok) {
+      let errorText = '';
+      try { errorText = await resp.text(); } catch {}
+      console.warn('Conversation title generation failed:', `HTTP ${resp.status}`, errorText.slice(0, 300));
+      return '';
+    }
     const data = await resp.json();
-    return cleanGeneratedConversationTitle(extractTitleTextFromLLMResponse(data));
+    const rawTitle = extractTitleTextFromLLMResponse(data);
+    const title = cleanGeneratedConversationTitle(rawTitle);
+    if (!title) console.warn('Conversation title generation returned empty title:', rawTitle);
+    return title;
   } catch (e) {
     console.warn('Conversation title generation failed:', e);
     return '';
   }
+}
+function scheduleConversationTitleGeneration(convId, firstQuestion) {
+  maybeGenerateConversationTitle(convId, firstQuestion)
+    .catch(e => console.warn('Conversation title generation failed:', e));
 }
 
 async function maybeGenerateConversationTitle(convId, firstQuestion) {
@@ -3787,6 +3799,7 @@ async function maybeGenerateConversationTitle(convId, firstQuestion) {
       latest.title = aiTitle;
       latest.titleSource = 'ai';
       latest.titleStatus = 'done';
+      latest.updated = Date.now();
     } else {
       latest.titleStatus = 'idle';
     }
@@ -3826,7 +3839,7 @@ async function saveCurrentConv(andRenderList) {
       meta.titleSource = 'fallback';
     }
     if (meta.titleSource !== 'ai' && meta.titleStatus !== 'generating') {
-      maybeGenerateConversationTitle(activeConvId, firstText);
+      scheduleConversationTitleGeneration(activeConvId, firstText);
     }
   }
   saveConvMeta();
@@ -12086,7 +12099,7 @@ async function agentLoop(userContent, displayText, fileList, usedSkills, options
   const userText = getUserTextFromContent(userContent) || displayText || '';
   appendUserBubble(displayText || userText, fileList, usedSkills, promptIndex, userEntry.id);
   if (conversation.filter(m => m.role === 'user').length === 1 && activeConvId && userText) {
-    maybeGenerateConversationTitle(activeConvId, userText);
+    scheduleConversationTitleGeneration(activeConvId, userText);
   }
   await _runAgentLoop(userText, { promptIndex, promptEntryId: userEntry.id, fileList, ralph: options.ralph });
 }
@@ -13399,7 +13412,7 @@ async function mediaGenerationLoop(text, filePaths, usedSkills) {
   appendUserBubble(mediaDisplay, filePaths, usedSkills, findConversationIndexByEntryId(userEntry.id), userEntry.id);
   const titleText = getUserTextFromContent(mediaDisplay) || text;
   if (conversation.filter(m => m.role === 'user').length === 1 && activeConvId && titleText) {
-    maybeGenerateConversationTitle(activeConvId, titleText);
+    scheduleConversationTitleGeneration(activeConvId, titleText);
   }
   try {
     const result = await runMediaGeneration(mode, text, filePaths);
