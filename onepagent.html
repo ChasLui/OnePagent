@@ -8342,12 +8342,12 @@ function showHitlModal(input) {
     }
     promptEl.textContent = state.prompt;
     contextEl.textContent = state.context;
-    contextEl.style.display = state.context ? '' : 'none';
+    contextEl.style.display = state.context ? 'block' : 'none';
     responseEl.value = state.mode === 'text' ? state.defaultChoice : '';
     responseEl.placeholder = t('hitlModal.responsePh');
     statusEl.textContent = '';
     choicesEl.innerHTML = '';
-    choicesEl.style.display = state.mode === 'choice' || state.mode === 'confirm' ? '' : 'none';
+    choicesEl.style.display = state.mode === 'choice' || state.mode === 'confirm' ? 'block' : 'none';
     labelEl.style.display = state.mode === 'confirm' ? 'none' : '';
     responseEl.style.display = state.mode === 'confirm' ? 'none' : '';
     submitEl.style.display = state.mode === 'confirm' ? 'none' : '';
