@@ -51,7 +51,7 @@ Open one HTML file and you get a fully-featured, internet-aware, programmable, e
 | Hooks | User-defined JS handlers on 6 agent lifecycle events |
 | Python sandbox | Execute Python in-browser via Pyodide |
 | Web Search | Tavily integration with `basic` / `advanced` depth modes |
-| Skills system | Install `.skill` / `.zip` packs, pull from GitHub, or create in-page |
+| Skills system | Install `.skill` / `.zip` packs, pull from GitHub, create in-page, or let AI manage skills with `SkillManager` |
 | Conversation management | Multiple sessions, folders, drag-and-drop, IndexedDB persistence, one-click export |
 | Cloud Sync | Incremental sync to S3-compatible buckets with optional AES-256-GCM encryption |
 ---
@@ -105,6 +105,14 @@ npx serve .
 Visit `http://localhost:8000/onepagent.html`, click **Settings** in the top bar to configure Provider / API Key / Models. Takes effect immediately.
 
 > **Service Worker note**: SWs register only over `https://` or `localhost`. Opening via `file://` falls back to direct fetch.
+
+---
+
+## Skills
+
+Install skills from the left **Skills** panel via Market, `.skill/.zip`, GitHub, or Create. GitHub folder URLs are supported, e.g. `https://github.com/anthropics/skills/tree/main/skills/skill-creator`.
+
+The agent can also use `SkillManager` to list, install, update, enable/disable, or remove skills; remote installs and destructive/high-risk changes require confirmation.
 
 ---
 

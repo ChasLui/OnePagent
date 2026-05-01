@@ -5887,15 +5887,204 @@ async function runSkillInstallTask(label, task, options = {}) {
   }
 }
 
+const SKILL_MANAGER_READ_ACTIONS = new Set(['list', 'inspect']);
+const SKILL_MANAGER_WRITE_ACTIONS = new Set(['create', 'install_from_markdown', 'install_from_json', 'install_from_github', 'update', 'set_active', 'remove']);
+const SKILL_MANAGER_ALLOWED_UPDATE_FIELDS = new Set(['description', 'icon', 'body', 'trigger', 'version', 'author', 'license', 'tools', 'references', 'scripts', 'files', 'binaryFiles', 'active']);
+
+function skillManagerResult(payload) {
+  return JSON.stringify(payload, null, 2);
+}
+
+function skillManagerError(action, error, extra = {}) {
+  return skillManagerResult({ ok: false, action, error, ...extra });
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSafeSkillName(name) {
+  return typeof name === 'string' && name.trim().length > 0 && name.length <= 80 && !/[\\/\x00-\x1F\x7F]/.test(name) && !name.includes('..');
+}
+
+function isSafeSkillRelPath(path) {
+  return typeof path === 'string' && path.trim().length > 0 && !path.startsWith('/') && !path.includes('..') && !path.includes('\\') && !/[\x00-\x1F\x7F]/.test(path);
+}
+
+function findSkillByIdOrName(ref = {}) {
+  const id = String(ref.id || '').trim();
+  const name = String(ref.name || '').trim();
+  if (id) return skills.find(s => s.id === id) || null;
+  if (name) return skills.find(s => s.name === name) || null;
+  return null;
+}
+
+function normalizeSkill(skill, options = {}) {
+  const s = isPlainObject(skill) ? skill : {};
+  if (!s.id) s.id = 'skill_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  if (!s.name && options.name) s.name = options.name;
+  if (!s.icon) s.icon = 'i:bolt';
+  s.name = String(s.name || '').trim();
+  s.description = String(s.description || '');
+  s.body = String(s.body || '');
+  s.trigger = String(s.trigger || '');
+  s.version = String(s.version || '');
+  s.author = String(s.author || '');
+  s.license = String(s.license || '');
+  if (!s.source) s.source = options.source || 'ai';
+  s.active = s.active !== false;
+  if (!Array.isArray(s.tools)) s.tools = [];
+  if (!isPlainObject(s.references)) s.references = {};
+  if (!isPlainObject(s.scripts)) s.scripts = {};
+  if (!isPlainObject(s.files)) s.files = {};
+  if (!isPlainObject(s.binaryFiles)) s.binaryFiles = {};
+  return s;
+}
+
+function getBuiltInToolNames() {
+  return new Set([
+    ...BASE_TOOLS_ANTHROPIC.map(t => t.name),
+    ...PYODIDE_NATIVE_TOOLS.map(t => t.name),
+    'SkillManager',
+    'memory_save',
+    'memory_search',
+    'memory_update',
+    'memory_forget'
+  ]);
+}
+
+function validateSkillInput(skill, context = {}) {
+  const errors = [];
+  if (!isSafeSkillName(skill.name)) errors.push('Skill name must be 1-80 characters and cannot contain /, \\, .., or control characters.');
+  for (const group of ['files', 'references', 'scripts', 'binaryFiles']) {
+    if (!isPlainObject(skill[group])) { errors.push(`${group} must be an object.`); continue; }
+    for (const key of Object.keys(skill[group])) {
+      const path = group === 'references' ? `references/${key}` : group === 'scripts' ? `scripts/${key}` : key;
+      if (!isSafeSkillRelPath(path)) errors.push(`Invalid ${group} path: ${key}`);
+    }
+  }
+  if (!Array.isArray(skill.tools)) errors.push('tools must be an array.');
+  const builtIns = getBuiltInToolNames();
+  const toolNames = new Set();
+  for (const tool of skill.tools || []) {
+    if (!isPlainObject(tool)) { errors.push('Each tool must be an object.'); continue; }
+    const name = String(tool.name || '').trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) errors.push(`Invalid tool name: ${name || '(empty)'}`);
+    if (builtIns.has(name)) errors.push(`Tool name conflicts with built-in tool: ${name}`);
+    if (toolNames.has(name)) errors.push(`Duplicate tool name in skill: ${name}`);
+    const conflictingSkill = skills.find(s => s.id !== skill.id && s.name !== skill.name && (s.tools || []).some(t => t?.name === name));
+    if (conflictingSkill) errors.push(`Tool name conflicts with skill "${conflictingSkill.name}": ${name}`);
+    toolNames.add(name);
+    if (tool.parameters !== undefined && !isPlainObject(tool.parameters)) errors.push(`Tool parameters must be an object: ${name}`);
+  }
+  if (context.operation === 'update' && context.updates && Object.prototype.hasOwnProperty.call(context.updates, 'name')) {
+    errors.push('Renaming skills is not supported by SkillManager update yet. Create a new skill and remove the old one instead.');
+  }
+  return errors;
+}
+
+function skillHasExecutableHandlers(skill) {
+  return (skill.tools || []).some(t => typeof t?.handler === 'string' && t.handler.trim());
+}
+
+function assessSkillRisk(skill, operation, oldSkill = null, options = {}) {
+  const reasons = [];
+  if (operation === 'remove') reasons.push('This deletes the skill metadata and stored files.');
+  if (operation === 'install' && oldSkill) reasons.push(`This overwrites existing skill "${oldSkill.name}".`);
+  if (operation === 'install_github') reasons.push('This installs skill files from a remote GitHub repository.');
+  if ((operation === 'install' || operation === 'install_github' || operation === 'create' || operation === 'update') && skillHasExecutableHandlers(skill)) reasons.push('Skill defines executable tool handlers.');
+  if (operation === 'set_active' && options.active === true && skillHasExecutableHandlers(skill)) reasons.push('Activating this skill can expose executable handlers to the agent.');
+  if (operation === 'update') {
+    const updates = options.updates || {};
+    if (Object.prototype.hasOwnProperty.call(updates, 'tools')) reasons.push('This changes skill tool definitions.');
+    if (Object.prototype.hasOwnProperty.call(updates, 'scripts')) reasons.push('This changes executable skill scripts.');
+    const fileGroupsChanged = ['files', 'references', 'scripts'].filter(k => Object.prototype.hasOwnProperty.call(updates, k));
+    const changedCount = fileGroupsChanged.reduce((n, k) => n + Object.keys(updates[k] || {}).length, 0);
+    if (changedCount > 10) reasons.push('This changes many skill resource files.');
+  }
+  const level = reasons.some(r => r.includes('executable') || r.includes('handlers') || r.includes('scripts')) ? 'high' : reasons.length ? 'medium' : 'low';
+  return { level, reasons };
+}
+
+function requiresSkillManagerConfirmation(risk, operation) {
+  return operation === 'remove' || risk.level === 'high' || risk.reasons.some(r => r.includes('overwrites'));
+}
+
+function serializeSkillForTool(skill, options = {}) {
+  const body = options.includeBody ? truncateMiddleText(skill.body || '', options.maxBodyChars || 8000) : undefined;
+  const tools = (skill.tools || []).map(t => ({ name: t.name, description: t.description || '', parameters: t.parameters || {}, hasHandler: !!(typeof t.handler === 'string' && t.handler.trim()), handlerLength: typeof t.handler === 'string' ? t.handler.length : 0 }));
+  const risk = assessSkillRisk(skill, 'inspect');
+  const data = {
+    id: skill.id,
+    name: skill.name,
+    description: skill.description || '',
+    icon: skill.icon || 'i:bolt',
+    active: skill.active !== false,
+    source: skill.source || '',
+    version: skill.version || '',
+    author: skill.author || '',
+    license: skill.license || '',
+    trigger: skill.trigger || '',
+    toolNames: tools.map(t => t.name).filter(Boolean),
+    hasExecutableHandlers: skillHasExecutableHandlers(skill),
+    referenceCount: Object.keys(skill.references || {}).length,
+    scriptCount: Object.keys(skill.scripts || {}).length,
+    fileCount: Object.keys(skill.files || {}).length,
+    binaryFileCount: Object.keys(skill.binaryFiles || {}).length,
+    riskLevel: risk.level
+  };
+  if (options.detail) {
+    data.body = body;
+    data.references = Object.keys(skill.references || {});
+    data.scripts = Object.keys(skill.scripts || {});
+    data.files = Object.keys(skill.files || {});
+    data.binaryFiles = Object.keys(skill.binaryFiles || {});
+    data.tools = tools;
+  }
+  return data;
+}
+
+function isSkillManagerWriteAction(input = {}) {
+  return SKILL_MANAGER_WRITE_ACTIONS.has(String(input.action || '').trim());
+}
+
+function setSkillActiveByIdOrName(ref, active) {
+  const skill = findSkillByIdOrName(ref);
+  if (!skill) return { skill: null, changed: false };
+  const desired = active !== false;
+  if ((skill.active !== false) === desired) return { skill, changed: false };
+  skill.active = desired;
+  if (skill.active) mountSkillToVfs(skill); else unmountSkillFromVfs(skill);
+  saveSkills(); renderSkills(); rebuildToolDefs();
+  return { skill, changed: true };
+}
+
+function applySkillUpdates(existing, updates = {}) {
+  const next = { ...existing };
+  for (const key of Object.keys(updates || {})) {
+    if (!SKILL_MANAGER_ALLOWED_UPDATE_FIELDS.has(key)) continue;
+    next[key] = updates[key];
+  }
+  return normalizeSkill(next, { source: existing.source || 'ai:update' });
+}
+
+function updateSkillByIdOrName(ref, updates = {}) {
+  const existing = findSkillByIdOrName(ref);
+  if (!existing) return { skill: null, oldSkill: null, changedFields: [] };
+  const next = applySkillUpdates(existing, updates);
+  const changedFields = Object.keys(updates || {}).filter(k => SKILL_MANAGER_ALLOWED_UPDATE_FIELDS.has(k));
+  const wasActive = existing.active !== false;
+  const willBeActive = next.active !== false;
+  if (wasActive) unmountSkillFromVfs(existing, true);
+  const idx = skills.findIndex(s => s.id === existing.id);
+  if (idx >= 0) skills[idx] = next;
+  if (willBeActive) mountSkillToVfs(next); else if (wasActive) renderFileTree();
+  saveSkills(); renderSkills(); rebuildToolDefs();
+  return { skill: next, oldSkill: existing, changedFields };
+}
+
 function installSkill(skill) {
-  if (!skill.id) skill.id = 'skill_' + Date.now();
-  if (!skill.icon) skill.icon = 'i:bolt';
-  skill.active = skill.active !== false;
-  if (!skill.tools) skill.tools = [];
-  if (!skill.references) skill.references = {};
-  if (!skill.scripts) skill.scripts = {};
-  if (!skill.files) skill.files = {};
-  if (!skill.binaryFiles) skill.binaryFiles = {};
+  skill = normalizeSkill(skill);
   // Remove old version
   const old = skills.find(s => s.name === skill.name);
   if (old) unmountSkillFromVfs(old);
@@ -6286,70 +6475,75 @@ async function importFromGithub(button, externalProgress) {
   return runSkillInstallTask('Fetching skill from GitHub...', runner, { button });
 }
 
-async function importFromGithubImpl(progress = () => {}) {
-  let url = document.getElementById('skillGithubUrl').value.trim();
-  const branch = document.getElementById('skillGithubBranch').value.trim() || 'main';
-  const skillPath = document.getElementById('skillGithubPath').value.trim() || '';
-
-  if (!url) { alert('Please enter a GitHub URL'); return; }
+function parseGithubSkillSource(input = {}) {
+  let url = String(input.url || input.repoUrl || input.githubUrl || input.repo || '').trim();
+  let branch = String(input.branch || '').trim();
+  let skillPath = String(input.path || input.skillPath || '').trim();
+  if (!url) throw new Error('GitHub URL is required.');
   if (!url.startsWith('http')) url = 'https://github.com/' + url;
-  const match = url.match(/github\.com\/([^/]+\/[^/]+)/);
-  if (!match) { alert('Invalid GitHub URL'); return; }
-  const repo = match[1].replace(/\.git$/, '');
-  const requestedPath = skillPath.replace(/^\/+|\/+$/g, '');
+  const match = url.match(/github\.com\/([^/]+)\/([^/]+)(?:\/(?:tree|blob)\/([^/]+)\/(.*))?/);
+  if (!match) throw new Error('Invalid GitHub URL.');
+  const repo = `${match[1]}/${match[2]}`.replace(/\.git$/, '');
+  if (!branch && match[3]) branch = decodeURIComponent(match[3]);
+  if (!skillPath && match[4]) skillPath = decodeURIComponent(match[4]);
+  return { repo, branch: branch || 'main', path: skillPath.replace(/^\/+|\/+$/g, '') };
+}
 
-  function _githubApiRef(ref) {
-    return encodeURIComponent(ref);
+function _githubApiRef(ref) {
+  return encodeURIComponent(ref);
+}
+function _dirname(path) {
+  const i = path.lastIndexOf('/');
+  return i >= 0 ? path.slice(0, i) : '';
+}
+function _pathWithin(path, root) {
+  return root ? (path === root || path.startsWith(root + '/')) : true;
+}
+function _relPath(path, root) {
+  return root ? path.slice(root.length + 1) : path;
+}
+function _base64ToBytes(b64) {
+  const raw = atob(String(b64 || '').replace(/\s/g, ''));
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+function _isBinaryGithubPath(path) {
+  return BINARY_EXTS.has(String(path || '').split('.').pop().toLowerCase());
+}
+function _putSkillAsset(skill, rel, bytes, isBinary) {
+  if (!rel || rel === 'SKILL.md' || rel === 'skill.json') return;
+  if (!skill.files) skill.files = {};
+  if (!skill.binaryFiles) skill.binaryFiles = {};
+  if (!skill.references) skill.references = {};
+  if (!skill.scripts) skill.scripts = {};
+  if (isBinary) {
+    skill.binaryFiles[rel] = Array.from(bytes);
+    skill.files[rel] = `[Binary: ${rel}, ${bytes.length} bytes]`;
+    return;
   }
-  function _dirname(path) {
-    const i = path.lastIndexOf('/');
-    return i >= 0 ? path.slice(0, i) : '';
-  }
-  function _pathWithin(path, root) {
-    return root ? (path === root || path.startsWith(root + '/')) : true;
-  }
-  function _relPath(path, root) {
-    return root ? path.slice(root.length + 1) : path;
-  }
-  function _base64ToBytes(b64) {
-    const raw = atob(String(b64 || '').replace(/\s/g, ''));
-    const bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-    return bytes;
-  }
-  function _isBinaryGithubPath(path) {
-    return BINARY_EXTS.has(String(path || '').split('.').pop().toLowerCase());
-  }
-  function _putSkillAsset(skill, rel, bytes, isBinary) {
-    if (!rel || rel === 'SKILL.md' || rel === 'skill.json') return;
-    if (!skill.files) skill.files = {};
-    if (!skill.binaryFiles) skill.binaryFiles = {};
-    if (!skill.references) skill.references = {};
-    if (!skill.scripts) skill.scripts = {};
-    if (isBinary) {
-      skill.binaryFiles[rel] = Array.from(bytes);
-      skill.files[rel] = `[Binary: ${rel}, ${bytes.length} bytes]`;
-      return;
-    }
-    const text = new TextDecoder().decode(bytes);
-    skill.files[rel] = text;
-    if (rel.startsWith('references/')) skill.references[rel.slice(11)] = text;
-    else if (rel.startsWith('scripts/')) skill.scripts[rel.slice(8)] = text;
-  }
-  async function fetchJson(apiUrl) {
-    const resp = await fetch(apiUrl);
-    if (!resp.ok) throw new Error(`GitHub API HTTP ${resp.status}`);
-    return await resp.json();
-  }
-  async function fetchBlobBytes(blobUrl, path) {
-    const blob = await fetchJson(blobUrl);
-    if (blob.encoding !== 'base64' || !blob.content) throw new Error(`Unsupported GitHub blob encoding for ${path}`);
-    return _base64ToBytes(blob.content);
-  }
+  const text = new TextDecoder().decode(bytes);
+  skill.files[rel] = text;
+  if (rel.startsWith('references/')) skill.references[rel.slice(11)] = text;
+  else if (rel.startsWith('scripts/')) skill.scripts[rel.slice(8)] = text;
+}
+async function fetchGithubJson(apiUrl) {
+  const resp = await fetch(apiUrl);
+  if (!resp.ok) throw new Error(`GitHub API HTTP ${resp.status}`);
+  return await resp.json();
+}
+async function fetchGithubBlobBytes(blobUrl, path) {
+  const blob = await fetchGithubJson(blobUrl);
+  if (blob.encoding !== 'base64' || !blob.content) throw new Error(`Unsupported GitHub blob encoding for ${path}`);
+  return _base64ToBytes(blob.content);
+}
 
+async function fetchSkillFromGithubOptions(options = {}, progress = () => {}) {
+  const source = options.repo && options.branch !== undefined && options.path !== undefined ? options : parseGithubSkillSource(options);
+  const { repo, branch, path: requestedPath } = source;
   progress('Fetching repository tree...', 15);
   const treeUrl = `https://api.github.com/repos/${repo}/git/trees/${_githubApiRef(branch)}?recursive=1`;
-  const treeData = await fetchJson(treeUrl);
+  const treeData = await fetchGithubJson(treeUrl);
   const blobs = (treeData.tree || []).filter(e => e.type === 'blob' && e.path);
   if (!blobs.length) throw new Error('Repository tree is empty or unavailable');
 
@@ -6376,12 +6570,12 @@ async function importFromGithubImpl(progress = () => {}) {
   let skill;
   if (skillMdEntry) {
     progress('Fetching SKILL.md...', 30);
-    const md = new TextDecoder().decode(await fetchBlobBytes(skillMdEntry.url, skillMdEntry.path));
+    const md = new TextDecoder().decode(await fetchGithubBlobBytes(skillMdEntry.url, skillMdEntry.path));
     skill = skillFromMd(md, `github:${repo}@${branch}`);
     skill.source = `github:${repo}@${branch}${skillRoot ? '/' + skillRoot : ''}`;
   } else {
     progress('Fetching skill.json...', 30);
-    const json = new TextDecoder().decode(await fetchBlobBytes(skillJsonEntry.url, skillJsonEntry.path));
+    const json = new TextDecoder().decode(await fetchGithubBlobBytes(skillJsonEntry.url, skillJsonEntry.path));
     skill = JSON.parse(json);
     skill.source = `github:${repo}@${branch}${skillRoot ? '/' + skillRoot : ''}`;
   }
@@ -6399,13 +6593,21 @@ async function importFromGithubImpl(progress = () => {}) {
     const rel = _relPath(entry.path, skillRoot);
     try {
       progress(`Fetching skill files ${idx + 1}/${totalFiles}: ${rel}`, 35 + Math.round(((idx + 1) / totalFiles) * 45));
-      const bytes = await fetchBlobBytes(entry.url, entry.path);
+      const bytes = await fetchGithubBlobBytes(entry.url, entry.path);
       _putSkillAsset(skill, rel, bytes, _isBinaryGithubPath(rel));
     } catch (e) {
       console.warn('Failed to fetch skill asset from GitHub:', entry.path, e);
     }
   }
+  return { skill, repo, branch, path: skillRoot };
+}
 
+async function importFromGithubImpl(progress = () => {}) {
+  const url = document.getElementById('skillGithubUrl').value.trim();
+  const branch = document.getElementById('skillGithubBranch').value.trim() || '';
+  const skillPath = document.getElementById('skillGithubPath').value.trim() || '';
+  if (!url) { alert('Please enter a GitHub URL'); return; }
+  const { skill } = await fetchSkillFromGithubOptions({ url, branch, path: skillPath }, progress);
   progress('Installing skill...', 90);
   installSkill(skill); closeSkillModal();
 }
@@ -9554,6 +9756,7 @@ const BASE_TOOLS_ANTHROPIC = [
   { name: 'RunSubAgent', description: 'Delegate a bounded read-only research task to a nested sub-agent. The sub-agent can inspect files, search, fetch, and summarize, but cannot edit files, execute code, ask the user, use MCP tools, or spawn more sub-agents.', input_schema: { type: 'object', properties: { task: { type: 'string', description: 'Specific task for the sub-agent to perform.' }, context: { type: 'string', description: 'Optional background, constraints, or expected output format.' }, max_steps: { type: 'integer', description: 'Maximum model/tool iterations. Defaults to 4 and is capped at 8.' } }, required: ['task'] } },
   { name: 'GenerateImage', description: 'Generate an image from a text prompt, or edit/transform attached images when input_image_paths is provided. Use this directly in normal chat when the user asks for image generation; no special mode switch is required. The prompt must be a complete, polished generation prompt synthesized from the user\'s latest request plus relevant conversation history, not just a verbatim copy of the last message. Saves outputs under /generations and returns generated file paths.', input_schema: { type: 'object', properties: { prompt: { type: 'string', description: 'Complete image prompt or edit instruction, incorporating relevant user requirements and conversation context.' }, input_image_paths: { type: 'array', items: { type: 'string' }, description: 'Optional VFS image paths to use for image-to-image editing or variation.' }, model: { type: 'string', description: 'Optional image model override. Defaults to the provider default image model.' } }, required: ['prompt'] } },
   { name: 'GenerateVideo', description: 'Generate a video from a text prompt, or from an attached image plus prompt when input_image_paths is provided. Use this directly in normal chat when the user asks for video generation; no special mode switch is required. The prompt must be a complete, polished generation prompt synthesized from the user\'s latest request plus relevant conversation history, not just a verbatim copy of the last message. Saves outputs under /generations and returns generated file paths.', input_schema: { type: 'object', properties: { prompt: { type: 'string', description: 'Complete video prompt or animation instruction, incorporating relevant user requirements and conversation context.' }, input_image_paths: { type: 'array', items: { type: 'string' }, description: 'Optional VFS image paths; the first valid image is used for image-to-video.' }, model: { type: 'string', description: 'Optional video model override. Defaults to the provider default video model.' } }, required: ['prompt'] } },
+  { name: 'SkillManager', description: 'Manage installed skills in the left Skills panel. Supports listing, inspecting, creating, installing from SKILL.md, JSON, or a GitHub skill folder URL, updating, enabling/disabling, and removing skills. Write actions modify persisted skills and may require confirmed=true for risky operations such as delete, overwrite, executable handlers, tools, scripts, or remote install.', input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'inspect', 'create', 'install_from_markdown', 'install_from_json', 'install_from_github', 'update', 'set_active', 'remove'], description: 'Skill management action.' }, id: { type: 'string', description: 'Skill id for inspect/update/set_active/remove.' }, name: { type: 'string', description: 'Skill name for inspect/update/set_active/remove.' }, markdown: { type: 'string', description: 'Full SKILL.md content for install_from_markdown.' }, skill: { type: 'object', description: 'Skill object for create or install_from_json.' }, url: { type: 'string', description: 'GitHub repository or folder URL for install_from_github, e.g. https://github.com/owner/repo/tree/main/path/to/skill.' }, repoUrl: { type: 'string', description: 'Alternative GitHub URL field for install_from_github.' }, branch: { type: 'string', description: 'GitHub branch or tag. Optional when the URL includes /tree/<branch>/.' }, path: { type: 'string', description: 'Path to the skill folder in the repository. Optional when the URL includes it.' }, updates: { type: 'object', description: 'Partial fields to update. Renaming is not supported.' }, active: { type: 'boolean', description: 'Desired active state for set_active.' }, dry_run: { type: 'boolean', description: 'Validate and summarize without applying changes.' }, confirmed: { type: 'boolean', description: 'Set true only after explicit user confirmation for risky write operations.' } }, required: ['action'] } },
   { name: 'TodoWrite', description: 'Maintain a user-visible task list for the current session. Use this proactively on multi-step work so the user can track progress. Each todo has: content (imperative form, e.g. "Run tests"), activeForm (present continuous, e.g. "Running tests"), status (pending | in_progress | completed). Exactly one task should be in_progress at a time. Update the full list on every change; this tool overwrites the prior list.', input_schema: { type: 'object', properties: { todos: { type: 'array', items: { type: 'object', properties: { content: { type: 'string', description: 'Imperative description of the task.' }, activeForm: { type: 'string', description: 'Present-continuous description shown while in progress.' }, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: 'Task status.' } }, required: ['content', 'activeForm', 'status'] } } }, required: ['todos'] } },
   { name: 'AskUser', description: 'Ask the user for clarification, suggestions, confirmation, or a choice before continuing. Use this when user input is needed to make a decision, resolve ambiguity, or get approval for a non-plan-mode step. This pauses the agent loop until the user responds.', input_schema: { type: 'object', properties: { prompt: { type: 'string', description: 'The question or request to show to the user. Be concise and include enough context for the user to answer.' }, mode: { type: 'string', enum: ['text', 'choice', 'confirm'], description: 'Input mode. text asks for freeform input, choice asks the user to select one option, confirm asks for yes/no. Defaults to text.' }, choices: { type: 'array', items: { type: 'string' }, description: 'Options to show when mode is choice. Use short, distinct labels.' }, default_choice: { type: 'string', description: 'Optional default choice or suggested answer.' }, allow_custom: { type: 'boolean', description: 'For choice mode, whether the user may provide a custom response instead of selecting one of the choices. Defaults to false.' }, context: { type: 'string', description: 'Optional additional background to display below the main prompt.' } }, required: ['prompt'] } },
   { name: 'ExitPlanMode', description: 'Call this ONLY while Plan Mode is active and your plan is ready for user approval. Pass the full plan as Markdown. The user gets an Approve/Reject dialog. If approved, Plan Mode exits and you may execute write tools on the next turn. If rejected, you receive the user\'s feedback and must revise the plan while staying in Plan Mode.', input_schema: { type: 'object', properties: { plan: { type: 'string', description: 'Complete, reviewable plan in Markdown.' } }, required: ['plan'] } },
@@ -9713,7 +9916,7 @@ function rebuildToolDefs(headId = activeEntryId, options = {}) {
 }
 
 function renderToolsGrid() {
-  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', NodeExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', RunSubAgent: 'i:bolt', GenerateImage: 'i:image', GenerateVideo: 'i:film', AskUser: 'i:message-circle' };
+  const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', NodeExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', RunSubAgent: 'i:bolt', GenerateImage: 'i:image', GenerateVideo: 'i:film', SkillManager: 'i:wrench', AskUser: 'i:message-circle' };
   const el = document.getElementById('toolsGrid');
   el.innerHTML = allToolsAnthropic.map(t => {
     const ic = icons[t.name] || 'i:wrench';
@@ -9732,7 +9935,8 @@ async function executeTool(name, input) {
   try {
     if (planMode && name !== 'ExitPlanMode' && name !== 'TodoWrite' && name !== 'AskUser') {
       const isMcp = mcpTools.find(t => t.name === name);
-      if (PLAN_MODE_WRITE_TOOLS.has(name) || isMcp) {
+      const isBlockedSkillManagerWrite = name === 'SkillManager' && isSkillManagerWriteAction(input || {});
+      if (PLAN_MODE_WRITE_TOOLS.has(name) || isMcp || isBlockedSkillManagerWrite) {
         return `Error: Plan Mode is active. The tool "${name}" is blocked. Finish gathering information with read-only tools (Read / Glob / Grep / WebSearch / Fetch) and call ExitPlanMode when your plan is ready for user approval.`;
       }
     }
@@ -9755,6 +9959,7 @@ async function executeTool(name, input) {
       case 'RunSubAgent': return await toolRunSubAgent(input);
       case 'GenerateImage': return hasConfiguredDefaultMediaModel('image') ? await toolGenerateImage(input) : `Error: ${t('media.noModel')}`;
       case 'GenerateVideo': return hasConfiguredDefaultMediaModel('video') ? await toolGenerateVideo(input) : `Error: ${t('media.noModel')}`;
+      case 'SkillManager': return await toolSkillManager(input || {});
       case 'TodoWrite': return toolTodoWrite(input);
       case 'AskUser': return await toolAskUser(input);
       case 'ExitPlanMode': return await toolExitPlanMode(input);
@@ -9773,6 +9978,122 @@ async function executeTool(name, input) {
         return `Unknown tool: ${name}`;
     }
   } catch (e) { return `Error: ${e.message}`; }
+}
+
+async function toolSkillManager(input = {}) {
+  const action = String(input.action || '').trim();
+  if (!SKILL_MANAGER_READ_ACTIONS.has(action) && !SKILL_MANAGER_WRITE_ACTIONS.has(action)) return skillManagerError(action || 'unknown', 'Invalid action.');
+
+  if (action === 'list') {
+    return skillManagerResult({ ok: true, action, skills: skills.map(s => serializeSkillForTool(s)), count: skills.length });
+  }
+
+  if (action === 'inspect') {
+    const skill = findSkillByIdOrName(input);
+    if (!skill) return skillManagerError(action, 'Skill not found.');
+    return skillManagerResult({ ok: true, action, skill: serializeSkillForTool(skill, { detail: true, includeBody: true }) });
+  }
+
+  if (action === 'create') {
+    const skill = normalizeSkill({ ...(input.skill || {}) }, { source: 'ai:create' });
+    if (!skill.name && input.name) skill.name = String(input.name).trim();
+    const errors = validateSkillInput(skill, { operation: 'create' });
+    const oldSkill = skills.find(s => s.name === skill.name);
+    if (oldSkill) errors.push(`Skill already exists: ${skill.name}. Use update or install_from_json with confirmation to overwrite.`);
+    if (errors.length) return skillManagerError(action, 'Skill validation failed.', { errors });
+    const risk = assessSkillRisk(skill, 'create');
+    if (input.dry_run) return skillManagerResult({ ok: true, action, dry_run: true, skill: serializeSkillForTool(skill, { detail: true, includeBody: true }), risk });
+    if (requiresSkillManagerConfirmation(risk, 'create') && input.confirmed !== true) return skillManagerResult({ ok: false, action, needs_confirmation: true, risk, summary: `Creating skill "${skill.name}" requires confirmation.` });
+    installSkill(skill);
+    logMemEntry('write', `Skill created by AI: ${skill.name}`);
+    return skillManagerResult({ ok: true, action, summary: `Created skill "${skill.name}".`, skill: serializeSkillForTool(skill), warnings: risk.reasons });
+  }
+
+  if (action === 'install_from_markdown') {
+    const markdown = String(input.markdown || '');
+    if (!markdown.trim()) return skillManagerError(action, 'markdown is required.');
+    const skill = normalizeSkill(skillFromMd(markdown, 'ai:markdown'), { source: 'ai:markdown' });
+    const oldSkill = skills.find(s => s.name === skill.name);
+    const errors = validateSkillInput(skill, { operation: 'install' });
+    if (errors.length) return skillManagerError(action, 'Skill validation failed.', { errors });
+    const risk = assessSkillRisk(skill, 'install', oldSkill);
+    if (input.dry_run) return skillManagerResult({ ok: true, action, dry_run: true, skill: serializeSkillForTool(skill, { detail: true, includeBody: true }), overwrite: !!oldSkill, risk });
+    if (requiresSkillManagerConfirmation(risk, 'install') && input.confirmed !== true) return skillManagerResult({ ok: false, action, needs_confirmation: true, overwrite: !!oldSkill, risk, summary: `Installing skill "${skill.name}" requires confirmation.` });
+    installSkill(skill);
+    return skillManagerResult({ ok: true, action, summary: `Installed skill "${skill.name}" from Markdown.`, skill: serializeSkillForTool(skill), warnings: risk.reasons });
+  }
+
+  if (action === 'install_from_json') {
+    const skillInput = input.skill;
+    if (!isPlainObject(skillInput)) return skillManagerError(action, 'skill object is required.');
+    const skill = normalizeSkill({ ...skillInput }, { source: skillInput.source || 'ai:json' });
+    const oldSkill = skills.find(s => s.name === skill.name);
+    const errors = validateSkillInput(skill, { operation: 'install' });
+    if (errors.length) return skillManagerError(action, 'Skill validation failed.', { errors });
+    const risk = assessSkillRisk(skill, 'install', oldSkill);
+    if (input.dry_run) return skillManagerResult({ ok: true, action, dry_run: true, skill: serializeSkillForTool(skill, { detail: true, includeBody: true }), overwrite: !!oldSkill, risk });
+    if (requiresSkillManagerConfirmation(risk, 'install') && input.confirmed !== true) return skillManagerResult({ ok: false, action, needs_confirmation: true, overwrite: !!oldSkill, risk, summary: `Installing skill "${skill.name}" requires confirmation.` });
+    installSkill(skill);
+    return skillManagerResult({ ok: true, action, summary: `Installed skill "${skill.name}" from JSON.`, skill: serializeSkillForTool(skill), warnings: risk.reasons });
+  }
+
+  if (action === 'install_from_github') {
+    const source = parseGithubSkillSource(input);
+    const { skill } = await fetchSkillFromGithubOptions(source, () => {});
+    normalizeSkill(skill, { source: `github:${source.repo}@${source.branch}${source.path ? '/' + source.path : ''}` });
+    const oldSkill = skills.find(s => s.name === skill.name);
+    const errors = validateSkillInput(skill, { operation: 'install_github' });
+    if (errors.length) return skillManagerError(action, 'Skill validation failed.', { errors });
+    const risk = assessSkillRisk(skill, 'install_github', oldSkill);
+    if (input.dry_run) return skillManagerResult({ ok: true, action, dry_run: true, source, skill: serializeSkillForTool(skill, { detail: true, includeBody: true }), overwrite: !!oldSkill, risk });
+    if (input.confirmed !== true) return skillManagerResult({ ok: false, action, needs_confirmation: true, source, overwrite: !!oldSkill, risk, summary: `Installing remote GitHub skill "${skill.name}" requires confirmation.` });
+    installSkill(skill);
+    return skillManagerResult({ ok: true, action, summary: `Installed skill "${skill.name}" from GitHub.`, source, skill: serializeSkillForTool(skill), warnings: risk.reasons });
+  }
+
+  if (action === 'update') {
+    const existing = findSkillByIdOrName(input);
+    if (!existing) return skillManagerError(action, 'Skill not found.');
+    const updates = isPlainObject(input.updates) ? input.updates : {};
+    if (!Object.keys(updates).length) return skillManagerError(action, 'updates object is required.');
+    const next = applySkillUpdates(existing, updates);
+    const errors = validateSkillInput(next, { operation: 'update', updates });
+    if (errors.length) return skillManagerError(action, 'Skill validation failed.', { errors });
+    const risk = assessSkillRisk(next, 'update', existing, { updates });
+    const changedFields = Object.keys(updates).filter(k => SKILL_MANAGER_ALLOWED_UPDATE_FIELDS.has(k));
+    if (input.dry_run) return skillManagerResult({ ok: true, action, dry_run: true, skill: serializeSkillForTool(next, { detail: true, includeBody: true }), changedFields, risk });
+    if (requiresSkillManagerConfirmation(risk, 'update') && input.confirmed !== true) return skillManagerResult({ ok: false, action, needs_confirmation: true, risk, changedFields, summary: `Updating skill "${existing.name}" requires confirmation.` });
+    const result = updateSkillByIdOrName(input, updates);
+    logMemEntry('write', `Skill updated by AI: ${result.skill.name} (${changedFields.join(', ') || 'no allowed fields'})`);
+    return skillManagerResult({ ok: true, action, summary: `Updated skill "${result.skill.name}".`, changedFields, skill: serializeSkillForTool(result.skill), warnings: risk.reasons });
+  }
+
+  if (action === 'set_active') {
+    if (typeof input.active !== 'boolean') return skillManagerError(action, 'active boolean is required.');
+    const skill = findSkillByIdOrName(input);
+    if (!skill) return skillManagerError(action, 'Skill not found.');
+    const risk = assessSkillRisk(skill, 'set_active', null, { active: input.active });
+    if (input.dry_run) return skillManagerResult({ ok: true, action, dry_run: true, skill: serializeSkillForTool(skill), targetActive: input.active, risk });
+    if (requiresSkillManagerConfirmation(risk, 'set_active') && input.confirmed !== true) return skillManagerResult({ ok: false, action, needs_confirmation: true, risk, summary: `Changing active state for skill "${skill.name}" requires confirmation.` });
+    const result = setSkillActiveByIdOrName(input, input.active);
+    if (!result.skill) return skillManagerError(action, 'Skill not found.');
+    logMemEntry('write', `Skill active set by AI: ${result.skill.name} -> ${input.active}`);
+    return skillManagerResult({ ok: true, action, summary: result.changed ? `Set skill "${result.skill.name}" active=${input.active}.` : `Skill "${result.skill.name}" was already active=${input.active}.`, changed: result.changed, skill: serializeSkillForTool(result.skill), warnings: risk.reasons });
+  }
+
+  if (action === 'remove') {
+    const skill = findSkillByIdOrName(input);
+    if (!skill) return skillManagerError(action, 'Skill not found.');
+    const risk = assessSkillRisk(skill, 'remove');
+    if (input.dry_run) return skillManagerResult({ ok: true, action, dry_run: true, skill: serializeSkillForTool(skill, { detail: true, includeBody: false }), risk });
+    if (input.confirmed !== true) return skillManagerResult({ ok: false, action, needs_confirmation: true, risk, summary: `Deleting skill "${skill.name}" requires confirmation.` });
+    const removedName = skill.name;
+    removeSkill(skill.id);
+    logMemEntry('write', `Skill removed by AI: ${removedName}`);
+    return skillManagerResult({ ok: true, action, summary: `Removed skill "${removedName}".`, warnings: risk.reasons });
+  }
+
+  return skillManagerError(action, 'Unhandled action.');
 }
 
 function genSubAgentRunId() {
@@ -11483,7 +11804,7 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   const projectedMessages = appendRuntimeReminderMessage(projectedMessagesBase, runtimeReminder);
   const mediaToolPrompt = getMediaToolPrompt();
   const pyodideNativePrompt = getPyodideNativeToolPrompt();
-  const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch) and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
+  const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools, or SkillManager write actions). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch), SkillManager list/inspect, and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
   const ralphPrompt = getRalphLoopPrompt();
   const memPrompt = await getCachedMemRecallForPrompt(projectedMessagesBase, { readOnly: !!options.readOnlyMemory, memoryRecallKey: options.memoryRecallKey });
   rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });

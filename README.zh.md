@@ -51,7 +51,7 @@
 | Hooks | 用户自定义 JS 处理函数，挂在 Agent 6 个生命周期事件上 |
 | Python 沙箱 | 通过 Pyodide 在浏览器内执行 Python |
 | Web Search | Tavily 集成，`basic` / `advanced` 两档搜索深度 |
-| Skills 系统 | `.skill` / `.zip` 安装，GitHub 拉取，或界面直接创建 |
+| Skills 系统 | `.skill` / `.zip` 安装，GitHub 拉取，界面创建，或让 AI 通过 `SkillManager` 管理技能 |
 | 会话管理 | 多会话、文件夹分组、拖拽排序、IndexedDB 持久化、一键导出 |
 | Cloud Sync | S3 兼容桶增量同步，可选 AES-256-GCM 端到端加密 |
 
@@ -106,6 +106,14 @@ npx serve .
 访问 `http://localhost:8000/onepagent.html`，点击顶栏 **Settings** 配置 Provider / API Key / 模型，保存后即刻生效。
 
 > **Service Worker 限制**：SW 仅在 `https://` 或 `localhost` 下注册。`file://` 打开时自动降级为直连 fetch。
+
+---
+
+## Skills 技能
+
+可在左侧 **Skills** 面板通过 Market、`.skill/.zip`、GitHub 或 Create 安装技能。GitHub 目录链接可直接使用，例如 `https://github.com/anthropics/skills/tree/main/skills/skill-creator`。
+
+Agent 也可以通过 `SkillManager` 列出、安装、更新、启用/停用或删除技能；远程安装和破坏性/高风险变更会要求确认。
 
 ---
 
