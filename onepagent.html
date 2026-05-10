@@ -1628,42 +1628,42 @@ document.addEventListener('DOMContentLoaded', function() {
       <div id="setStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
-      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px">Diagnostics</label>
-      <button type="button" class="modal-btn secondary" onclick="runFsDiagnostics()" style="width:100%;padding:8px 10px;font-size:11px;margin-bottom:6px">Run file system diagnostics</button>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px" data-i18n="settings.diagnosticsHeader">Diagnostics</label>
+      <button type="button" class="modal-btn secondary" onclick="runFsDiagnostics()" style="width:100%;padding:8px 10px;font-size:11px;margin-bottom:6px" data-i18n="settings.runFsDiag">Run file system diagnostics</button>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
-      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><span>Ralph Loop</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400">(unattended continue-until-done mode)</span></label>
-      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setRalphEnabled" style="width:auto;margin:0"> <span>Enable Ralph Loop by default</span></label>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><span data-i18n="settings.ralphHeader">Ralph Loop</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.ralphHeaderHint">(unattended continue-until-done mode)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setRalphEnabled" style="width:auto;margin:0"> <span data-i18n="settings.ralphEnable">Enable Ralph Loop by default</span></label>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0">Max Ralph iterations</label>
+        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0" data-i18n="settings.ralphMaxIter">Max Ralph iterations</label>
         <input type="number" id="setRalphMaxIterations" min="1" max="20" placeholder="5" style="width:80px;margin-bottom:0">
-        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin:0"><input type="checkbox" id="setRalphUnlimited" style="width:auto;margin:0" onchange="document.getElementById('setRalphMaxIterations').disabled=this.checked"> <span>Unlimited</span></label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin:0"><input type="checkbox" id="setRalphUnlimited" style="width:auto;margin:0" onchange="document.getElementById('setRalphMaxIterations').disabled=this.checked"> <span data-i18n="settings.ralphUnlimited">Unlimited</span></label>
       </div>
-      <label style="margin-top:0">Ralph completion marker</label>
+      <label style="margin-top:0" data-i18n="settings.ralphMarker">Ralph completion marker</label>
       <input type="text" id="setRalphCompletionMarker" placeholder="RALPH_DONE" style="margin-bottom:6px">
-      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:6px">Unattended mode stops when the assistant outputs the completion marker. It will not approve Plan Mode or destructive human prompts.</div>
+      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:6px" data-i18n="settings.ralphDesc">Unattended mode stops when the assistant outputs the completion marker. It will not approve Plan Mode or destructive human prompts.</div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
-      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><svg class="ui-icon" aria-hidden="true"><use href="#i-bolt"></use></svg> <span>Agent Swarm</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400">(parallel orchestrator-worker fanout)</span></label>
-      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setSwarmEnabled" style="width:auto;margin:0"> <span>Enable Swarm (exposes <code>SwarmSpawn</code> tool to the lead agent)</span></label>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><svg class="ui-icon" aria-hidden="true"><use href="#i-bolt"></use></svg> <span data-i18n="settings.swarmHeader">Agent Swarm</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.swarmHeaderHint">(parallel orchestrator-worker fanout)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setSwarmEnabled" style="width:auto;margin:0"> <span data-i18n-html="settings.swarmEnable">Enable Swarm (exposes <code>SwarmSpawn</code> tool to the lead agent)</span></label>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0">Max concurrency</label>
+        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0" data-i18n="settings.swarmConcurrency">Max concurrency</label>
         <input type="number" id="setSwarmConcurrency" min="1" max="8" placeholder="3" style="width:70px;margin-bottom:0">
-        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0">Max workers / turn</label>
+        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0" data-i18n="settings.swarmMaxWorkers">Max workers / turn</label>
         <input type="number" id="setSwarmMaxWorkers" min="1" max="32" placeholder="8" style="width:70px;margin-bottom:0">
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0">Total token budget / turn</label>
+        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0" data-i18n="settings.swarmTotalBudget">Total token budget / turn</label>
         <input type="number" id="setSwarmTotalBudget" min="10000" max="2000000" step="10000" placeholder="250000" style="width:120px;margin-bottom:0">
       </div>
-      <label style="margin-top:0">Worker model override <span style="text-transform:none;color:var(--text-dim);font-weight:400">(empty = inherit lead model; use a cheaper model like haiku/sonnet to control cost)</span></label>
+      <label style="margin-top:0"><span data-i18n="settings.swarmWorkerModel">Worker model override</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.swarmWorkerModelHint">(empty = inherit lead model; use a cheaper model like haiku/sonnet to control cost)</span></label>
       <input type="text" id="setSwarmWorkerModel" placeholder="claude-haiku-4-5 (or empty)" style="margin-bottom:6px">
-      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setSwarmAllowWrite" style="width:auto;margin:0"> <span>Allow write tools in worker roles (default off; safe roles are read-only)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setSwarmAllowWrite" style="width:auto;margin:0"> <span data-i18n="settings.swarmAllowWrite">Allow write tools in worker roles (default off; safe roles are read-only)</span></label>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0">Max handoff chain length</label>
+        <label style="margin:0;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);flex-shrink:0" data-i18n="settings.swarmMaxChain">Max handoff chain length</label>
         <input type="number" id="setSwarmMaxHandoffChain" min="1" max="8" placeholder="3" style="width:70px;margin-bottom:0">
       </div>
-      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:6px">Built-in roles: <b>researcher</b>, <b>critic</b>, <b>writer</b>, <b>coder</b> (all read-only). The lead agent can issue several <code>SwarmSpawn</code> calls in one turn — they run in parallel up to the concurrency cap. Workers can also chain via <code>SwarmHandoff</code> (researcher → critic → writer; coder → critic → writer). Cycles and depth-overflow are rejected. Workers cannot ask the user, use MCP, or spawn more workers. Plan Mode and Ralph Loop are honored as guards.</div>
+      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:6px" data-i18n-html="settings.swarmDesc">Built-in roles: <b>researcher</b>, <b>critic</b>, <b>writer</b>, <b>coder</b> (all read-only). The lead agent can issue several <code>SwarmSpawn</code> calls in one turn — they run in parallel up to the concurrency cap. Workers can also chain via <code>SwarmHandoff</code> (researcher → critic → writer; coder → critic → writer). Cycles and depth-overflow are rejected. Workers cannot ask the user, use MCP, or spawn more workers. Plan Mode and Ralph Loop are honored as guards.</div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
       <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><svg class="ui-icon" aria-hidden="true"><use href="#i-brain"></use></svg> <span data-i18n="settings.memHeader">Memory</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.memHeaderHint">(persists facts across conversations)</span></label>
@@ -2103,6 +2103,29 @@ const I18N = {
     'settings.clearAllConfirm2': 'Final confirmation: this will permanently erase settings, conversations, memories, skills, local files, sync config, and cached blobs. Continue?',
     'settings.clearAllFailed': 'Failed to clear local data: ',
     'settings.privacyNote': 'Settings (including S3 credentials and encryption passphrase) are stored locally in your browser (localStorage). Keys never leave your machine except when sent directly to the configured API endpoints or S3 bucket.',
+    // Diagnostics
+    'settings.diagnosticsHeader': 'Diagnostics',
+    'settings.runFsDiag': 'Run file system diagnostics',
+    // Ralph Loop
+    'settings.ralphHeader': 'Ralph Loop',
+    'settings.ralphHeaderHint': '(unattended continue-until-done mode)',
+    'settings.ralphEnable': 'Enable Ralph Loop by default',
+    'settings.ralphMaxIter': 'Max Ralph iterations',
+    'settings.ralphUnlimited': 'Unlimited',
+    'settings.ralphMarker': 'Ralph completion marker',
+    'settings.ralphDesc': 'Unattended mode stops when the assistant outputs the completion marker. It will not approve Plan Mode or destructive human prompts.',
+    // Agent Swarm
+    'settings.swarmHeader': 'Agent Swarm',
+    'settings.swarmHeaderHint': '(parallel orchestrator-worker fanout)',
+    'settings.swarmEnable': 'Enable Swarm (exposes the <code>SwarmSpawn</code> tool to the lead agent)',
+    'settings.swarmConcurrency': 'Max concurrency',
+    'settings.swarmMaxWorkers': 'Max workers / turn',
+    'settings.swarmTotalBudget': 'Total token budget / turn',
+    'settings.swarmWorkerModel': 'Worker model override',
+    'settings.swarmWorkerModelHint': '(empty = inherit lead model; use a cheaper model like haiku/sonnet to control cost)',
+    'settings.swarmAllowWrite': 'Allow write tools in worker roles (default off; safe roles are read-only)',
+    'settings.swarmMaxChain': 'Max handoff chain length',
+    'settings.swarmDesc': 'Built-in roles: <b>researcher</b>, <b>critic</b>, <b>writer</b>, <b>coder</b> (all read-only). The lead agent can issue several <code>SwarmSpawn</code> calls in one turn — they run in parallel up to the concurrency cap. Workers can also chain via <code>SwarmHandoff</code> (researcher → critic → writer; coder → critic → writer). Cycles and depth-overflow are rejected. Workers cannot ask the user, use MCP, or spawn more workers. Plan Mode and Ralph Loop are honored as guards.',
     // Skill install modal
     'skillModal.title': 'Install Skill',
     'skillModal.tab.market': 'Market',
@@ -2414,6 +2437,29 @@ const I18N = {
     'settings.clearAllConfirm2': '最后确认：这会永久清除设置、对话、记忆、本地文件、技能、同步配置和缓存 Blob。是否继续？',
     'settings.clearAllFailed': '清除本地数据失败：',
     'settings.privacyNote': '设置（包括 S3 凭据与加密口令）仅保存在本地浏览器 localStorage。密钥只会发送到你配置的 API 端点或 S3 存储桶。',
+    // Diagnostics
+    'settings.diagnosticsHeader': '诊断',
+    'settings.runFsDiag': '运行文件系统诊断',
+    // Ralph Loop
+    'settings.ralphHeader': 'Ralph 循环',
+    'settings.ralphHeaderHint': '（无人值守 continue-until-done 模式）',
+    'settings.ralphEnable': '默认启用 Ralph 循环',
+    'settings.ralphMaxIter': '最大迭代次数',
+    'settings.ralphUnlimited': '无限',
+    'settings.ralphMarker': '完成标记',
+    'settings.ralphDesc': '无人值守模式在 assistant 输出完成标记时停止。Plan Mode 和高风险用户确认在此模式下不会自动通过。',
+    // Agent Swarm
+    'settings.swarmHeader': '智能体蜂群',
+    'settings.swarmHeaderHint': '（并行 orchestrator-worker 扇出）',
+    'settings.swarmEnable': '启用蜂群（向 lead 暴露 <code>SwarmSpawn</code> 工具）',
+    'settings.swarmConcurrency': '最大并发',
+    'settings.swarmMaxWorkers': '每轮最大 worker 数',
+    'settings.swarmTotalBudget': '每轮总 token 预算',
+    'settings.swarmWorkerModel': 'Worker 模型覆盖',
+    'settings.swarmWorkerModelHint': '（留空则继承 lead 模型；改用 haiku/sonnet 这类便宜模型可控成本）',
+    'settings.swarmAllowWrite': '允许 worker 角色使用写工具（默认关，内置角色均为只读）',
+    'settings.swarmMaxChain': 'Handoff 链最大长度',
+    'settings.swarmDesc': '内置角色：<b>researcher</b>、<b>critic</b>、<b>writer</b>、<b>coder</b>（全部只读）。lead 一轮内可发出多个 <code>SwarmSpawn</code>，按并发上限并行执行。worker 之间也可通过 <code>SwarmHandoff</code> 接力（researcher → critic → writer；coder → critic → writer）。环检测、深度超限会被拒绝。worker 不能向用户提问、不能用 MCP、也不能再启动 worker。Plan Mode 与 Ralph 循环作为护栏继续生效。',
     // Skill install modal
     'skillModal.title': '安装技能',
     'skillModal.tab.market': '市场',
@@ -2529,6 +2575,11 @@ function applyI18n(root) {
     const key = el.getAttribute('data-i18n');
     if (!key) return;
     el.textContent = t(key, el.textContent);
+  });
+  scope.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const key = el.getAttribute('data-i18n-html');
+    if (!key) return;
+    el.innerHTML = t(key, el.innerHTML);
   });
   scope.querySelectorAll('[data-i18n-title]').forEach(el => {
     const key = el.getAttribute('data-i18n-title');
