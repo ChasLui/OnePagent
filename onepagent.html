@@ -986,6 +986,19 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 /* Conversation list */
+.conv-search-trigger.active { border-color: var(--accent-orange); color: var(--accent-orange); background: rgba(255,107,53,0.06); }
+.conv-search { display: none; align-items: center; gap: 6px; margin-bottom: 5px; padding: 0 1px; }
+.conv-search.show { display: flex; }
+.conv-search-box { flex: 1; display: flex; align-items: center; gap: 5px; min-width: 0; height: 24px; padding: 0 6px; background: var(--bg-root); border: 1px solid var(--border); border-radius: 5px; color: var(--text-dim); transition: border-color 0.15s, background 0.15s; }
+.conv-search-box:focus-within { border-color: var(--accent-orange); background: var(--bg-panel); }
+.conv-search-box .ui-icon { width: 11px; height: 11px; flex-shrink: 0; opacity: 0.75; }
+.conv-search-box input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-size: 10px; font-family: 'JetBrains Mono', monospace; padding: 0; }
+.conv-search-box input::placeholder { color: var(--text-dim); }
+.conv-search-clear { width: 16px; height: 16px; flex: none; display: none; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 12px; line-height: 1; padding: 0; }
+.conv-search-clear.show { display: inline-flex; }
+.conv-search-clear:hover { color: var(--accent-red); background: rgba(255,68,102,0.1); }
+.conv-list-meta { display: flex; justify-content: space-between; align-items: center; min-height: 14px; margin: -2px 1px 5px; font-size: 9px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+.conv-list-meta .hot { color: var(--accent-orange); }
 .conv-list { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto; border-radius: 4px; }
 .conv-list.drop-target { background: rgba(91,138,245,0.08); outline: 1px dashed var(--accent-blue); }
 .conv-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.15s; border: 1px solid transparent; }
@@ -1009,6 +1022,9 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .conv-folder .cf-add { font-size: 10px; color: var(--text-dim); padding: 1px 4px; border-radius: 3px; opacity: 0; transition: opacity 0.15s, color 0.15s, background 0.15s; cursor: pointer; flex-shrink: 0; }
 .conv-folder:hover .cf-add { opacity: 1; }
 .conv-folder .cf-add:hover { color: var(--accent-green); background: rgba(0,255,136,0.1); }
+.conv-list-more { margin: 4px 1px 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-secondary); background: transparent; font-size: 10px; cursor: pointer; font-family: 'JetBrains Mono', monospace; }
+.conv-list-more:hover { border-color: var(--accent-orange); color: var(--accent-orange); background: rgba(255,107,53,0.06); }
+.conv-list-empty { font-size: 10px; color: var(--text-dim); padding: 6px 8px; border: 1px dashed var(--border); border-radius: 5px; text-align: center; }
 
 /* Web Search */
 .ws-config { display: flex; flex-direction: column; gap: 6px; }
@@ -1255,9 +1271,17 @@ document.addEventListener('DOMContentLoaded', function() {
   <div class="left-panel">
     <!-- Conversations -->
     <div class="panel-section" data-section="conversations">
-      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-message-circle"></use></svg></span> <span data-i18n="section.conversations">CONVERSATIONS</span></span><span style="display:flex;gap:2px" onclick="event.stopPropagation()"><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="newConvFolder()" title="New folder" data-i18n-title="action.newConvFolder"><svg class="ui-icon" aria-hidden="true"><use href="#i-folder"></use></svg></button><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="newConversation()"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg> <span data-i18n="action.newConv">New</span></button></span><span class="section-arrow">&#x25BC;</span></div>
+      <div class="section-title" onclick="toggleSection(this)"><span style="display:flex;align-items:center;gap:6px"><span class="icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-message-circle"></use></svg></span> <span data-i18n="section.conversations">CONVERSATIONS</span></span><span style="display:flex;gap:2px" onclick="event.stopPropagation()"><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="newConvFolder()" title="New folder" data-i18n-title="action.newConvFolder"><svg class="ui-icon" aria-hidden="true"><use href="#i-folder"></use></svg></button><button class="skill-install-btn conv-search-trigger" id="convSearchToggle" style="flex:none;margin:0;padding:2px 8px" onclick="toggleConvSearch()" title="Search conversations" data-i18n-title="conv.openSearch"><svg class="ui-icon" aria-hidden="true"><use href="#i-search"></use></svg></button><button class="skill-install-btn" style="flex:none;margin:0;padding:2px 8px" onclick="newConversation()"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg> <span data-i18n="action.newConv">New</span></button></span><span class="section-arrow">&#x25BC;</span></div>
       <div class="section-body">
-        <div class="conv-list" id="convList" ondragover="onConvListDragOver(event)" ondragleave="onConvListDragLeave(event)" ondrop="onConvDropToRoot(event)"></div>
+        <div class="conv-search" id="convSearchRow">
+          <label class="conv-search-box" for="convSearchInput">
+            <svg class="ui-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input id="convSearchInput" type="search" placeholder="Search conversations..." data-i18n-placeholder="conv.searchPh" oninput="onConvSearchInput(this.value)">
+            <button class="conv-search-clear" id="convSearchClear" onclick="clearConvSearch()" title="Clear search" data-i18n-title="conv.clearSearch">&times;</button>
+          </label>
+        </div>
+        <div class="conv-list-meta" id="convListMeta"></div>
+        <div class="conv-list" id="convList" onscroll="onConvListScroll()" ondragover="onConvListDragOver(event)" ondragleave="onConvListDragLeave(event)" ondrop="onConvDropToRoot(event)"></div>
       </div>
     </div>
 
@@ -2137,6 +2161,13 @@ const I18N = {
     'agent.init': 'Agent initialized. Upload files and type a task to begin.',
     // Section titles (left + right panels)
     'section.conversations': 'CONVERSATIONS',
+    'conv.openSearch': 'Search conversations',
+    'conv.searchPh': 'Search conversations...',
+    'conv.clearSearch': 'Clear search',
+    'conv.showing': 'Showing {shown} / {total}',
+    'conv.matching': 'Matches {shown} / {total}',
+    'conv.loadMore': 'Load {n} more',
+    'conv.noMatches': 'No conversations matched.',
     'section.systemPrompt': 'SYSTEM PROMPT',
     'section.skills': 'SKILLS',
     'section.files': 'FILES',
@@ -2562,6 +2593,13 @@ const I18N = {
     'agent.init': 'Agent 已初始化。上传文件并输入任务开始。',
     // Section titles
     'section.conversations': '对话',
+    'conv.openSearch': '搜索对话',
+    'conv.searchPh': '搜索对话...',
+    'conv.clearSearch': '清空搜索',
+    'conv.showing': '显示 {shown} / {total}',
+    'conv.matching': '匹配 {shown} / {total}',
+    'conv.loadMore': '再加载 {n} 条',
+    'conv.noMatches': '没有匹配的对话。',
     'section.systemPrompt': '系统提示词',
     'section.skills': '技能',
     'section.files': '文件',
@@ -5305,38 +5343,175 @@ function onConvListDragLeave(e) {
   if (!list.contains(e.relatedTarget)) list.classList.remove('drop-target');
 }
 
-function renderConvList() {
+const CONV_RENDER_BATCH_SIZE = 80;
+let convRenderLimit = CONV_RENDER_BATCH_SIZE;
+let convSearchQuery = '';
+let _convRenderedCount = 0;
+let _convTotalCount = 0;
+
+function _convTemplate(key, fallback, data = {}) {
+  let text = t(key, fallback);
+  for (const [k, v] of Object.entries(data)) text = text.replaceAll('{' + k + '}', String(v));
+  return text;
+}
+
+function _convSearchText(c, folder) {
+  const shortDate = new Date(c.updated || c.created || Date.now()).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const fullDate = new Date(c.updated || c.created || Date.now()).toLocaleDateString();
+  return [
+    c.title || '',
+    c.id || '',
+    shortDate,
+    fullDate,
+    String(c.messageCount || 0) + 'msg',
+    folder?.name || ''
+  ].join(' ').toLowerCase();
+}
+
+function onConvSearchInput(value) {
+  convSearchQuery = String(value || '');
+  convRenderLimit = CONV_RENDER_BATCH_SIZE;
+  renderConvList();
+}
+
+function toggleConvSearch() {
+  const row = document.getElementById('convSearchRow');
+  const input = document.getElementById('convSearchInput');
+  const btn = document.getElementById('convSearchToggle');
+  if (!row) return;
+  const hasQuery = !!String(input?.value || '').trim();
+  const show = !row.classList.contains('show') || hasQuery;
+  row.classList.toggle('show', show);
+  btn?.classList.toggle('active', show);
+  if (show) setTimeout(() => { input?.focus(); if (hasQuery) input?.select(); }, 0);
+}
+
+function clearConvSearch() {
+  const input = document.getElementById('convSearchInput');
+  if (input) input.value = '';
+  convSearchQuery = '';
+  document.getElementById('convSearchRow')?.classList.remove('show');
+  document.getElementById('convSearchToggle')?.classList.remove('active');
+  onConvSearchInput('');
+}
+
+function loadMoreConversations(ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  if (_convRenderedCount >= _convTotalCount) return;
+  convRenderLimit += CONV_RENDER_BATCH_SIZE;
+  renderConvList({ preserveScroll: true });
+}
+
+function onConvListScroll() {
   const el = document.getElementById('convList');
-  if (!convHistory.length && !convFolders.length) { el.innerHTML = '<div style="font-size:10px;color:var(--text-dim);padding:4px">No conversations</div>'; return; }
-  const convItemHtml = c => {
+  if (!el || _convRenderedCount >= _convTotalCount) return;
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 32) loadMoreConversations();
+}
+
+function renderConvList(options = {}) {
+  const el = document.getElementById('convList');
+  if (!el) return;
+  const meta = document.getElementById('convListMeta');
+  const input = document.getElementById('convSearchInput');
+  const clearBtn = document.getElementById('convSearchClear');
+  const searchRow = document.getElementById('convSearchRow');
+  const searchToggle = document.getElementById('convSearchToggle');
+  if (input && input.value !== convSearchQuery) input.value = convSearchQuery;
+  const q = String(convSearchQuery || '').trim().toLowerCase();
+  if (clearBtn) clearBtn.classList.toggle('show', !!q);
+  if (q) {
+    searchRow?.classList.add('show');
+    searchToggle?.classList.add('active');
+  }
+  const prevScroll = options.preserveScroll ? el.scrollTop : 0;
+  if (!convHistory.length && !convFolders.length) {
+    el.innerHTML = '<div class="conv-list-empty">No conversations</div>';
+    if (meta) meta.textContent = '';
+    _convRenderedCount = 0; _convTotalCount = 0;
+    return;
+  }
+  const convItemHtml = (c, opts = {}) => {
     const active = c.id === activeConvId ? ' active' : '';
-    const inFolder = c.folderId ? ' in-folder' : '';
+    const inFolder = opts.inFolder ? ' in-folder' : '';
     const time = new Date(c.updated || c.created).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     const msgs = Number(c.messageCount || 0);
-    return `<div class="conv-item${active}${inFolder}" data-id="${c.id}" draggable="true" onclick="switchConversation('${c.id}')" oncontextmenu="showConvCtxMenu(event,'${c.id}')" ondragstart="onConvDragStart(event,'${c.id}')" ondragend="onConvDragEnd(event)">
-      <span class="c-title">${esc(c.title)}</span>
+    const dragAttrs = opts.searchMode ? 'draggable="false"' : `draggable="true" ondragstart="onConvDragStart(event,'${esc(c.id)}')" ondragend="onConvDragEnd(event)"`;
+    return `<div class="conv-item${active}${inFolder}" data-id="${esc(c.id)}" ${dragAttrs} onclick="switchConversation('${esc(c.id)}')" oncontextmenu="showConvCtxMenu(event,'${esc(c.id)}')">
+      <span class="c-title">${esc(c.title || 'New Chat')}</span>
       <span class="c-time">${msgs}msg ${time}</span>
-      <span class="c-del" onclick="event.stopPropagation();deleteConversation('${c.id}')" title="Delete">&times;</span>
+      <span class="c-del" onclick="event.stopPropagation();deleteConversation('${esc(c.id)}')" title="Delete">&times;</span>
     </div>`;
   };
-  const parts = [];
   const folderIds = new Set(convFolders.map(f => f.id));
-  for (const f of convFolders) {
-    const children = convHistory.filter(c => c.folderId === f.id);
-    const openCls = f.expanded ? ' open' : '';
-    parts.push(`<div class="conv-folder${openCls}" data-folder-id="${f.id}" onclick="toggleConvFolder('${f.id}')" oncontextmenu="showFolderCtxMenu(event,'${f.id}')" ondragover="onConvDragOver(event,this)" ondragleave="onConvDragLeave(event,this)" ondrop="onConvDropToFolder(event,'${f.id}')">
-      <span class="cf-arrow">&#x25B6;</span>
-      <span class="cf-icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-folder"></use></svg></span>
-      <span class="cf-name">${esc(f.name)}</span>
-      <span class="cf-count">${children.length}</span>
-      <span class="cf-add" title="${esc(t('action.newConv'))}" onclick="event.stopPropagation();newConversation(false,'${f.id}')"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg></span>
-    </div>`);
-    if (f.expanded) for (const c of children) parts.push(convItemHtml(c));
+  const folderById = new Map(convFolders.map(f => [f.id, f]));
+  const parts = [];
+  let shown = 0;
+  let total = 0;
+  const pushMore = () => {
+    if (shown >= total) return;
+    const n = Math.min(CONV_RENDER_BATCH_SIZE, total - shown);
+    parts.push(`<button type="button" class="conv-list-more" onclick="loadMoreConversations(event)">${esc(_convTemplate('conv.loadMore', 'Load {n} more', { n }))}</button>`);
+  };
+  if (q) {
+    for (const f of convFolders) {
+      const folderHit = String(f.name || '').toLowerCase().includes(q);
+      const children = convHistory.filter(c => c.folderId === f.id && (folderHit || _convSearchText(c, f).includes(q)));
+      if (!children.length) continue;
+      total += children.length;
+      const visible = children.slice(0, Math.max(0, convRenderLimit - shown));
+      if (!visible.length) continue;
+      parts.push(`<div class="conv-folder open" data-folder-id="${esc(f.id)}" oncontextmenu="showFolderCtxMenu(event,'${esc(f.id)}')">
+        <span class="cf-arrow">&#x25B6;</span>
+        <span class="cf-icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-folder"></use></svg></span>
+        <span class="cf-name">${esc(f.name)}</span>
+        <span class="cf-count">${children.length}</span>
+      </div>`);
+      for (const c of visible) { parts.push(convItemHtml(c, { inFolder: true, searchMode: true })); shown++; }
+    }
+    const rootMatches = convHistory.filter(c => (!c.folderId || !folderIds.has(c.folderId)) && _convSearchText(c, folderById.get(c.folderId)).includes(q));
+    total += rootMatches.length;
+    for (const c of rootMatches.slice(0, Math.max(0, convRenderLimit - shown))) {
+      parts.push(convItemHtml(c, { searchMode: true }));
+      shown++;
+    }
+  } else {
+    const expandedFolderIds = new Set(convFolders.filter(f => f.expanded).map(f => f.id));
+    total = convHistory.filter(c => !c.folderId || !folderIds.has(c.folderId) || expandedFolderIds.has(c.folderId)).length;
+    for (const f of convFolders) {
+      const children = convHistory.filter(c => c.folderId === f.id);
+      const openCls = f.expanded ? ' open' : '';
+      parts.push(`<div class="conv-folder${openCls}" data-folder-id="${esc(f.id)}" onclick="toggleConvFolder('${esc(f.id)}')" oncontextmenu="showFolderCtxMenu(event,'${esc(f.id)}')" ondragover="onConvDragOver(event,this)" ondragleave="onConvDragLeave(event,this)" ondrop="onConvDropToFolder(event,'${esc(f.id)}')">
+        <span class="cf-arrow">&#x25B6;</span>
+        <span class="cf-icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-folder"></use></svg></span>
+        <span class="cf-name">${esc(f.name)}</span>
+        <span class="cf-count">${children.length}</span>
+        <span class="cf-add" title="${esc(t('action.newConv'))}" onclick="event.stopPropagation();newConversation(false,'${esc(f.id)}')"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus"></use></svg></span>
+      </div>`);
+      if (f.expanded && shown < convRenderLimit) {
+        const visible = children.slice(0, convRenderLimit - shown);
+        for (const c of visible) { parts.push(convItemHtml(c, { inFolder: true })); shown++; }
+      }
+    }
+    if (shown < convRenderLimit) {
+      for (const c of convHistory) {
+        if (c.folderId && folderIds.has(c.folderId)) continue;
+        if (shown >= convRenderLimit) break;
+        parts.push(convItemHtml(c));
+        shown++;
+      }
+    }
   }
-  for (const c of convHistory) {
-    if (!c.folderId || !folderIds.has(c.folderId)) parts.push(convItemHtml(c));
+  if (!parts.length) parts.push(`<div class="conv-list-empty">${esc(t(q ? 'conv.noMatches' : 'status.empty', q ? 'No conversations matched.' : 'No conversations'))}</div>`);
+  else pushMore();
+  _convRenderedCount = shown;
+  _convTotalCount = total;
+  if (meta) {
+    const key = q ? 'conv.matching' : 'conv.showing';
+    const fallback = q ? 'Matches {shown} / {total}' : 'Showing {shown} / {total}';
+    meta.innerHTML = `<span class="${q ? 'hot' : ''}">${esc(_convTemplate(key, fallback, { shown, total }))}</span>`;
   }
   el.innerHTML = parts.join('');
+  if (options.preserveScroll) el.scrollTop = prevScroll;
 }
 
 function resetConversationContext() {
