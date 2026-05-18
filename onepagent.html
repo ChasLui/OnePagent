@@ -1708,7 +1708,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <input type="number" id="setDaytonaAutoDelete" min="0" placeholder="1440">
           </div>
         </div>
-        <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-top:4px" data-i18n="settings.sandboxNote">When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. The VFS is uploaded to /home/daytona before each call; only files written under /home/daytona/outputs are pulled back to VFS /outputs after the call. Put final results in /home/daytona/outputs.</div>
+        <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-top:4px" data-i18n="settings.sandboxNote">When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. Read/Write/Edit target Daytona first; /foo.js and /home/daytona/foo.js refer to the same sandbox file. Only files under /home/daytona/outputs are pulled back to VFS /outputs after Bash. Put final results in /home/daytona/outputs.</div>
         <div style="display:flex;gap:6px;align-items:center;margin-top:8px">
           <button type="button" class="modal-btn secondary" id="setSandboxTestBtn" onclick="testDaytonaSandbox()" style="padding:6px 10px;font-size:11px" data-i18n="settings.sandboxTest">Test sandbox</button>
           <div id="setSandboxTestStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;flex:1;white-space:pre-wrap;word-break:break-word"></div>
@@ -2322,7 +2322,7 @@ const I18N = {
     'settings.daytonaAutoArchive': 'DAYTONA_AUTO_ARCHIVE_INTERVAL',
     'settings.daytonaAutoDelete': 'DAYTONA_AUTO_DELETE_INTERVAL',
     'settings.daytonaMinutes': '(min)',
-    'settings.sandboxNote': 'When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. The VFS is uploaded to /home/daytona before each call; only files written under /home/daytona/outputs are pulled back to VFS /outputs after the call. Put final results in /home/daytona/outputs.',
+    'settings.sandboxNote': 'When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. Read/Write/Edit target Daytona first; /foo.js and /home/daytona/foo.js refer to the same sandbox file. Only files under /home/daytona/outputs are pulled back to VFS /outputs after Bash. Put final results in /home/daytona/outputs.',
     'settings.sandboxTest': 'Test sandbox',
     'settings.sandboxTestRunning': 'Creating sandbox and running echo + uname …',
     'settings.sandboxTestOk': 'Sandbox OK',
@@ -2752,7 +2752,7 @@ const I18N = {
     'settings.daytonaAutoArchive': 'DAYTONA_AUTO_ARCHIVE_INTERVAL — 自动归档间隔',
     'settings.daytonaAutoDelete': 'DAYTONA_AUTO_DELETE_INTERVAL — 自动删除间隔（归档后）',
     'settings.daytonaMinutes': '（分钟）',
-    'settings.sandboxNote': '启用远程沙箱后，仅暴露 Bash，运行在 Daytona Linux 容器内；PythonExec / JSExec / NodeExec / Pyodide 工具会被隐藏 —— 通过 Bash 调用 python3 / node / pip 等。每次调用前会将 VFS 上传到 /home/daytona；调用后只会把 /home/daytona/outputs 下的文件拉回到 VFS /outputs。最终结果请输出到 /home/daytona/outputs。',
+    'settings.sandboxNote': '启用远程沙箱后，仅暴露 Bash，运行在 Daytona Linux 容器内；PythonExec / JSExec / NodeExec / Pyodide 工具会被隐藏 —— 通过 Bash 调用 python3 / node / pip 等。Read/Write/Edit 优先操作 Daytona；/foo.js 与 /home/daytona/foo.js 指向同一个沙箱文件。Bash 后只会把 /home/daytona/outputs 拉回到 VFS /outputs。最终结果请输出到 /home/daytona/outputs。',
     'settings.sandboxTest': '测试沙箱',
     'settings.sandboxTestRunning': '正在创建沙箱并运行 echo + uname …',
     'settings.sandboxTestOk': '沙箱可用',
@@ -12312,14 +12312,10 @@ function rebuildToolDefs(headId = activeEntryId, options = {}) {
   }).map(t => {
     if (!_remote) return t;
     if (t.name === 'Bash') return { ...t, description: 'Execute a real shell command in the remote Daytona sandbox (Linux container). Working directory defaults to /home/daytona. The VFS is uploaded before the run; after the run, only files under /home/daytona/outputs are pulled back into VFS /outputs. Put final result files in /home/daytona/outputs so the user can inspect or download them. Use this for everything: shell utilities, python3 / pip, node / npm, file ops, network calls, etc. Pip/npm installs and /home/daytona changes persist across calls within the same conversation.', input_schema: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to execute.' } }, required: ['command'] } };
-    // File-system tools stay on the local VFS. Their writes flow to the sandbox
-    // before the next Bash call; only /home/daytona/outputs flows back after
-    // Bash. Add a clarifying suffix so the model knows the path mapping
-    // (VFS /foo ↔ sandbox /home/daytona/foo).
-    const remoteFsNote = ' Remote sandbox mode: the VFS path you pass here maps to /home/daytona<vfs path> inside the Daytona container (e.g. /data.csv ↔ /home/daytona/data.csv). Edits via this tool are pushed to the sandbox before the next Bash call. After Bash returns, only /home/daytona/outputs is synced back to VFS /outputs, so final result files should be written under /home/daytona/outputs in Bash or /outputs via VFS tools.';
-    if (t.name === 'Read' || t.name === 'Write' || t.name === 'Edit' || t.name === 'Glob' || t.name === 'Grep') {
-      return { ...t, description: (t.description || '') + remoteFsNote };
-    }
+    const remoteFileToolNote = ' Remote sandbox mode: this tool targets the Daytona sandbox first. You may pass either VFS-style /foo.js or sandbox absolute /home/daytona/foo.js; both refer to /home/daytona/foo.js. Do not prefix an already-sandbox path again. Successful reads/writes/edits update the VFS shadow path (/foo.js). After Bash returns, only /home/daytona/outputs is automatically synced back to VFS /outputs.';
+    const remoteSearchToolNote = ' Remote sandbox mode: this searches the browser VFS shadow, not a live Daytona filesystem scan. Use Bash for live sandbox find/grep. Final result files should be written under /home/daytona/outputs in Bash or /outputs via VFS tools.';
+    if (t.name === 'Read' || t.name === 'Write' || t.name === 'Edit') return { ...t, description: (t.description || '') + remoteFileToolNote };
+    if (t.name === 'Glob' || t.name === 'Grep') return { ...t, description: (t.description || '') + remoteSearchToolNote };
     return t;
   });
   if (pyodideInstance) allToolsAnthropic.push(...PYODIDE_NATIVE_TOOLS);
@@ -12376,9 +12372,9 @@ async function executeTool(name, input) {
     logMemEntry('read', `Tool: ${name}`);
     flashTool(name);
     switch (name) {
-      case 'Read': return toolRead(input);
-      case 'Write': { const r = toolWrite(input); if (input?.file_path) markVfsTouched(input.file_path); return r; }
-      case 'Edit': { const r = toolEdit(input); if (input?.file_path) markVfsTouched(input.file_path); return r; }
+      case 'Read': return await toolRead(input);
+      case 'Write': { const r = await toolWrite(input); if (input?.file_path) markVfsTouched(input.file_path); return r; }
+      case 'Edit': { const r = await toolEdit(input); if (input?.file_path) markVfsTouched(input.file_path); return r; }
       case 'Glob': return toolGlob(input);
       case 'Grep': return toolGrep(input);
       case 'Bash': return await (isRemoteSandbox() ? toolBashRemote(input) : toolBash(input));
@@ -13166,8 +13162,139 @@ async function toolBbClaim(input) {
   return `Claimed task ${id}.\nKey: ${e.key}\nBrief: ${e.content}\n\nWhen finished, write your result with bb_write({type:"result", key:"${e.key}", content:..., tags:["from:${id}"]}).`;
 }
 
-function toolRead(input) {
-  const fp = input.file_path || '';
+function _remoteToolFilePaths(filePath) {
+  const raw = String(filePath || '').trim().replace(/\\/g, '/');
+  const normalized = normPath(raw || '/');
+  if (normalized === DAYTONA_WORKSPACE || normalized.startsWith(DAYTONA_WORKSPACE + '/')) {
+    const rel = normalized.slice(DAYTONA_WORKSPACE.length) || '/';
+    return { raw, vfsPath: normPath(rel), remotePath: normalized };
+  }
+  const vfsPath = normalized;
+  return { raw, vfsPath, remotePath: DAYTONA_WORKSPACE + (vfsPath === '/' ? '' : vfsPath) };
+}
+
+function _rememberRemoteShadow(convId, vfsPath) {
+  const sess = window._daytonaSessions?.[convId];
+  if (!sess || !vfsPath || vfsPath === '/') return;
+  if (!sess.syncedIn) sess.syncedIn = new Map();
+  const node = vfsResolve(vfsPath);
+  if (node?.type === 'file') sess.syncedIn.set(vfsPath, _vfsFingerprint(node));
+}
+
+function _formatReadText(text, input) {
+  let lines = String(text || '').split('\n');
+  const off = Math.max(0, Number(input?.offset) || 0);
+  const lim = input?.limit == null ? lines.length : Math.max(0, Number(input.limit) || 0);
+  lines = lines.slice(off, off + lim);
+  return lines.map((l, i) => `${String(off + i + 1).padStart(5)}\t${l}`).join('\n');
+}
+
+function _readVfsForTool(input, filePath) {
+  const stat = vfsStat(filePath);
+  if (!stat) return { ok: false, output: `File not found: ${filePath}` };
+  if (stat.type !== 'file') return { ok: false, output: `Not a file: ${filePath}` };
+  if (stat.binary) return { ok: true, output: `[Binary file: ${stat.path}, ${stat.size} bytes]`, binary: true };
+  const r = vfsRead(filePath);
+  if (r.error) return { ok: false, output: r.error };
+  return { ok: true, output: _formatReadText(r.content, input), text: r.content };
+}
+
+async function _copyVfsFileToRemote(convId, paths) {
+  const node = vfsResolve(paths.vfsPath);
+  if (!node || node.type !== 'file') return false;
+  if (node.binary) {
+    const bytes = await vfsGetBinary(paths.vfsPath);
+    if (!bytes) return false;
+    await daytonaClient.writeFile(convId, paths.remotePath, bytes);
+  } else {
+    await daytonaClient.writeFile(convId, paths.remotePath, node.content || '');
+  }
+  _rememberRemoteShadow(convId, paths.vfsPath);
+  return true;
+}
+
+async function _shadowRemoteBytes(convId, paths, bytes) {
+  if (!paths.vfsPath || paths.vfsPath === '/') return;
+  if (_looksLikeText(bytes)) {
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    vfsWrite(paths.vfsPath, text);
+  } else {
+    await vfsWriteBinary(paths.vfsPath, bytes);
+  }
+  _rememberRemoteShadow(convId, paths.vfsPath);
+}
+
+async function toolReadRemote(input) {
+  if (!activeConvId) return 'Error: no active conversation to bind a remote sandbox to.';
+  const fp = input?.file_path || '';
+  if (!String(fp).trim()) return 'Error: file_path is required.';
+  const paths = _remoteToolFilePaths(fp);
+  try {
+    const bytes = await daytonaClient.readFile(activeConvId, paths.remotePath, true);
+    await _shadowRemoteBytes(activeConvId, paths, bytes);
+    if (!_looksLikeText(bytes)) return `[Binary file: ${paths.vfsPath}, ${bytes.length} bytes]`;
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    return _formatReadText(text, input);
+  } catch (e) {
+    const local = _readVfsForTool(input, paths.vfsPath);
+    if (local.ok) {
+      try { await _copyVfsFileToRemote(activeConvId, paths); } catch {}
+      return local.output;
+    }
+    return `File not found in sandbox or VFS: ${fp}\nSandbox path: ${paths.remotePath}\nSandbox error: ${e?.message || e}`;
+  }
+}
+
+async function toolWriteRemote(input) {
+  if (!activeConvId) return 'Error: no active conversation to bind a remote sandbox to.';
+  if (!String(input?.file_path || '').trim()) return 'Error: file_path is required.';
+  const paths = _remoteToolFilePaths(input?.file_path || '');
+  const content = String(input?.content ?? '');
+  try {
+    await daytonaClient.writeFile(activeConvId, paths.remotePath, content);
+  } catch (e) {
+    return `Error (sandbox Write ${paths.remotePath}): ${e?.message || e}`;
+  }
+  const r = vfsWrite(paths.vfsPath, content);
+  if (r.error) return r.error;
+  _rememberRemoteShadow(activeConvId, paths.vfsPath);
+  return `File created in sandbox at: ${paths.remotePath} (VFS shadow: ${r.path}, ${r.bytes} bytes)`;
+}
+
+async function toolEditRemote(input) {
+  if (!activeConvId) return 'Error: no active conversation to bind a remote sandbox to.';
+  if (!String(input?.file_path || '').trim()) return 'Error: file_path is required.';
+  const paths = _remoteToolFilePaths(input?.file_path || '');
+  const oldStr = String(input?.old_str ?? '');
+  const newStr = String(input?.new_str ?? '');
+  if (!oldStr) return 'Error: old_str is required.';
+  let content = '';
+  try {
+    const bytes = await daytonaClient.readFile(activeConvId, paths.remotePath, true);
+    if (!_looksLikeText(bytes)) return `Error: cannot edit binary file in sandbox: ${paths.remotePath}`;
+    content = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  } catch (e) {
+    const local = vfsRead(paths.vfsPath);
+    if (local.error) return `Error: file not found in sandbox or VFS: ${paths.raw || input?.file_path || ''}\nSandbox path: ${paths.remotePath}\nSandbox error: ${e?.message || e}`;
+    content = local.content || '';
+  }
+  const c = content.split(oldStr).length - 1;
+  if (c === 0) return `Error: old_str not found in ${paths.remotePath}`;
+  if (c > 1) return `Error: old_str matches ${c} locations in ${paths.remotePath}. Make it more specific.`;
+  const next = content.replace(oldStr, newStr);
+  try {
+    await daytonaClient.writeFile(activeConvId, paths.remotePath, next);
+  } catch (e) {
+    return `Error (sandbox Edit ${paths.remotePath}): ${e?.message || e}`;
+  }
+  vfsWrite(paths.vfsPath, next);
+  _rememberRemoteShadow(activeConvId, paths.vfsPath);
+  return `Successfully edited sandbox file ${paths.remotePath} (VFS shadow: ${paths.vfsPath})`;
+}
+
+async function toolRead(input) {
+  const fp = input?.file_path || '';
+  if (!String(fp).trim()) return 'Error: file_path is required.';
   // L3 progressive loading: @skill:name/references/file.md or @skill:name/scripts/file.py
   if (fp.startsWith('@skill:')) {
     const ref = resolveSkillReference(fp);
@@ -13176,14 +13303,29 @@ function toolRead(input) {
     if (scr) { logMemEntry('read', `L3 skill script: ${fp}`); return scr; }
     return `Error: Skill resource not found: ${fp}`;
   }
-  const stat = vfsStat(fp);
-  if (!stat) return `File not found: ${fp}`;
-  if (stat.type !== 'file') return `Not a file: ${fp}`;
-  if (stat.binary) { return `[Binary file: ${stat.path}, ${stat.size} bytes]`; }
-  const r = vfsRead(fp); if (r.error) return r.error; let lines = r.content.split('\n'); const off = input.offset || 0; const lim = input.limit || lines.length; lines = lines.slice(off, off + lim); return lines.map((l, i) => `${String(off + i + 1).padStart(5)}\t${l}`).join('\n');
+  if (isRemoteSandbox()) return await toolReadRemote(input);
+  const local = _readVfsForTool(input, fp);
+  return local.output;
 }
-function toolWrite(input) { const r = vfsWrite(input.file_path, input.content); if (r.error) return r.error; return `File created successfully at: ${r.path} (${r.bytes} bytes)`; }
-function toolEdit(input) { const p = normPath(input.file_path); const r = vfsRead(p); if (r.error) return r.error; const c = r.content.split(input.old_str).length - 1; if (c === 0) return `Error: old_str not found in ${p}`; if (c > 1) return `Error: old_str matches ${c} locations. Make it more specific.`; vfsWrite(p, r.content.replace(input.old_str, input.new_str)); return `Successfully edited ${p}`; }
+async function toolWrite(input) {
+  if (!String(input?.file_path || '').trim()) return 'Error: file_path is required.';
+  if (isRemoteSandbox()) return await toolWriteRemote(input);
+  const r = vfsWrite(input.file_path, input.content);
+  if (r.error) return r.error;
+  return `File created successfully at: ${r.path} (${r.bytes} bytes)`;
+}
+async function toolEdit(input) {
+  if (!String(input?.file_path || '').trim()) return 'Error: file_path is required.';
+  if (isRemoteSandbox()) return await toolEditRemote(input);
+  const p = normPath(input.file_path);
+  const r = vfsRead(p);
+  if (r.error) return r.error;
+  const c = r.content.split(input.old_str).length - 1;
+  if (c === 0) return `Error: old_str not found in ${p}`;
+  if (c > 1) return `Error: old_str matches ${c} locations. Make it more specific.`;
+  vfsWrite(p, r.content.replace(input.old_str, input.new_str));
+  return `Successfully edited ${p}`;
+}
 function toolGlob(input) { const r = vfsGlob(input.pattern, input.path); return r.length ? r.join('\n') : 'No files matched.'; }
 function toolGrep(input) { const r = vfsGrep(input.pattern, input.path, input.include); return r.length ? r.join('\n') : 'No matches found.'; }
 
@@ -14852,7 +14994,7 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   const pyodideNativePrompt = getPyodideNativeToolPrompt();
   const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools, or SkillManager write actions). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch), SkillManager list/inspect, and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
   const ralphPrompt = getRalphLoopPrompt();
-  const sandboxPrompt = isRemoteSandbox() ? '\n\n[REMOTE SANDBOX]\nA real Linux container (Daytona) is attached. Your execution surface in this mode:\n- **Bash** is the ONLY code-execution tool. Run interpreters from the shell: `python3 script.py`, `python3 -c "..."`, `node script.js`, `pip install ...`, `npm install ...`. Pip/npm installs and /home/daytona changes persist across Bash calls within this conversation.\n- **Read / Write / Edit / Glob / Grep** operate on the browser VFS. Before every Bash call, the VFS is uploaded to /home/daytona so files are available in the sandbox. After Bash returns, only files under /home/daytona/outputs are pulled back into the VFS as /outputs; other sandbox changes remain remote. In Bash, write final result files, reports, exports, generated media, and artifacts under /home/daytona/outputs (or relative outputs/ from cwd) so the user can inspect or download them.\n- **PythonExec / JSExec / NodeExec / VfsToPyodide / PyodideToVfs are DISABLED.** Do not mention them in tool lists or attempt to call them — they are intentionally hidden because the sandbox is a full Linux container and Bash covers every case.\n- Path mapping: VFS `/foo/bar.py` ↔ sandbox `/home/daytona/foo/bar.py`. cwd for Bash defaults to /home/daytona. Do NOT pass cwd=/workspace — that directory does not exist in the Daytona default snapshot and the daemon will silently return exit -1 with an empty body.\nWhen the user asks "what tools do you have", list ONLY the tools that are actually exposed in this request — do not enumerate disabled tools.' : '';
+  const sandboxPrompt = isRemoteSandbox() ? '\n\n[REMOTE SANDBOX]\nA real Linux container (Daytona) is attached. Your execution surface in this mode:\n- **Bash** is the ONLY code-execution tool. Run interpreters from the shell: `python3 script.py`, `python3 -c "..."`, `node script.js`, `pip install ...`, `npm install ...`. Pip/npm installs and /home/daytona changes persist across Bash calls within this conversation.\n- **Read / Write / Edit** target the Daytona filesystem first. You may pass either VFS-style `/foo/bar.py` or sandbox absolute `/home/daytona/foo/bar.py`; both refer to `/home/daytona/foo/bar.py`. Do not build paths like `/home/daytona/home/daytona/...`. Successful reads/writes/edits update the browser VFS shadow at `/foo/bar.py`.\n- **Glob / Grep** search the browser VFS shadow. Use Bash for live sandbox `find`/`grep` when you need the current container filesystem.\n- Before every Bash call, the VFS shadow is uploaded to /home/daytona so files are available in the sandbox. After Bash returns, only files under /home/daytona/outputs are pulled back into the VFS as /outputs; other sandbox changes remain remote. In Bash, write final result files, reports, exports, generated media, and artifacts under /home/daytona/outputs (or relative outputs/ from cwd) so the user can inspect or download them.\n- **PythonExec / JSExec / NodeExec / VfsToPyodide / PyodideToVfs are DISABLED.** Do not mention them in tool lists or attempt to call them — they are intentionally hidden because the sandbox is a full Linux container and Bash covers every case.\n- cwd for Bash defaults to /home/daytona. Do NOT pass cwd=/workspace — that directory does not exist in the Daytona default snapshot and the daemon will silently return exit -1 with an empty body.\nWhen the user asks "what tools do you have", list ONLY the tools that are actually exposed in this request — do not enumerate disabled tools.' : '';
   const memPrompt = await getCachedMemRecallForPrompt(projectedMessagesBase, { readOnly: !!options.readOnlyMemory, memoryRecallKey: options.memoryRecallKey });
   rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });
   const anthropicTools = getEnabledToolsAnthropic();
