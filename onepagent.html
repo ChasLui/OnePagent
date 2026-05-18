@@ -1673,6 +1673,45 @@ document.addEventListener('DOMContentLoaded', function() {
       <div id="setStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;margin-bottom:6px"></div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><svg class="ui-icon" aria-hidden="true"><use href="#i-terminal"></use></svg> <span data-i18n="settings.sandboxHeader">Code Sandbox</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.sandboxHeaderHint">(where Python/JS/Bash tools run)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:8px"><input type="checkbox" id="setSandboxEnabled" onchange="onSandboxProviderChange()" style="width:auto;margin:0"> <span data-i18n="settings.sandboxEnable">ENABLE_SANDBOX — Enable sandbox environment for running code</span></label>
+      <label data-i18n="settings.sandboxPlatform">SANDBOX_PLATFORM</label>
+      <select id="setSandboxPlatform" onchange="onSandboxProviderChange()" style="width:100%;padding:8px 10px;background:var(--bg-root);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:10px">
+        <option value="daytona">daytona</option>
+      </select>
+      <div id="setSandboxDaytonaBox" style="display:none;border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;background:var(--bg-root)">
+        <label data-i18n="settings.daytonaApiKey">DAYTONA_API_KEY</label>
+        <input type="password" id="setDaytonaApiKey" placeholder="dt-...">
+        <label data-i18n="settings.daytonaServerUrl">DAYTONA_SERVER_URL</label>
+        <input type="text" id="setDaytonaServerUrl" placeholder="https://app.daytona.io/api">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <label><span data-i18n="settings.daytonaTimeout">DAYTONA_TIMEOUT</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.daytonaTimeoutHint">(seconds)</span></label>
+            <input type="number" id="setDaytonaTimeout" min="1" placeholder="180">
+          </div>
+          <div>
+            <label data-i18n="settings.daytonaImage">DAYTONA_IMAGE</label>
+            <input type="text" id="setDaytonaImage" placeholder="daytonaio/sandbox:0.6.0">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div>
+            <label><span data-i18n="settings.daytonaAutoStop">DAYTONA_AUTO_STOP_INTERVAL</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.daytonaMinutes">(min)</span></label>
+            <input type="number" id="setDaytonaAutoStop" min="0" placeholder="5">
+          </div>
+          <div>
+            <label><span data-i18n="settings.daytonaAutoArchive">DAYTONA_AUTO_ARCHIVE_INTERVAL</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.daytonaMinutes">(min)</span></label>
+            <input type="number" id="setDaytonaAutoArchive" min="0" placeholder="5">
+          </div>
+          <div>
+            <label><span data-i18n="settings.daytonaAutoDelete">DAYTONA_AUTO_DELETE_INTERVAL</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.daytonaMinutes">(min)</span></label>
+            <input type="number" id="setDaytonaAutoDelete" min="0" placeholder="1440">
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-top:4px" data-i18n="settings.sandboxNote">When remote sandbox is active, PythonExec / JSExec / Bash all execute inside a Daytona container. One sandbox per conversation, auto-destroyed on new conversation or page unload. Files referenced in tool input are auto-synced before and after each run.</div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
       <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px" data-i18n="settings.diagnosticsHeader">Diagnostics</label>
       <button type="button" class="modal-btn secondary" onclick="runFsDiagnostics()" style="width:100%;padding:8px 10px;font-size:11px;margin-bottom:6px" data-i18n="settings.runFsDiag">Run file system diagnostics</button>
 
@@ -2264,6 +2303,20 @@ const I18N = {
     'settings.clearAllConfirm1': 'Delete ALL local data on this device?',
     'settings.clearAllConfirm2': 'Final confirmation: this will permanently erase settings, conversations, memories, skills, local files, sync config, and cached blobs. Continue?',
     'settings.clearAllFailed': 'Failed to clear local data: ',
+    'settings.sandboxHeader': 'Code Sandbox',
+    'settings.sandboxHeaderHint': '(where Python/JS/Bash tools run)',
+    'settings.sandboxEnable': 'ENABLE_SANDBOX — Enable sandbox environment for running code',
+    'settings.sandboxPlatform': 'SANDBOX_PLATFORM',
+    'settings.daytonaApiKey': 'DAYTONA_API_KEY',
+    'settings.daytonaServerUrl': 'DAYTONA_SERVER_URL',
+    'settings.daytonaTimeout': 'DAYTONA_TIMEOUT',
+    'settings.daytonaTimeoutHint': '(seconds)',
+    'settings.daytonaImage': 'DAYTONA_IMAGE',
+    'settings.daytonaAutoStop': 'DAYTONA_AUTO_STOP_INTERVAL',
+    'settings.daytonaAutoArchive': 'DAYTONA_AUTO_ARCHIVE_INTERVAL',
+    'settings.daytonaAutoDelete': 'DAYTONA_AUTO_DELETE_INTERVAL',
+    'settings.daytonaMinutes': '(min)',
+    'settings.sandboxNote': 'When remote sandbox is active, PythonExec / JSExec / Bash all execute inside a Daytona container. One sandbox per conversation, auto-destroyed on new conversation or page unload. Files referenced in tool input are auto-synced before and after each run.',
     'settings.privacyNote': 'Settings (including S3 credentials and encryption passphrase) are stored locally in your browser (localStorage). Keys never leave your machine except when sent directly to the configured API endpoints or S3 bucket.',
     // Diagnostics
     'settings.diagnosticsHeader': 'Diagnostics',
@@ -2674,6 +2727,20 @@ const I18N = {
     'settings.clearAllConfirm1': '确定要删除当前设备上的全部本地数据吗？',
     'settings.clearAllConfirm2': '最后确认：这会永久清除设置、对话、记忆、本地文件、技能、同步配置和缓存 Blob。是否继续？',
     'settings.clearAllFailed': '清除本地数据失败：',
+    'settings.sandboxHeader': '代码沙箱',
+    'settings.sandboxHeaderHint': '（Python/JS/Bash 工具的执行环境）',
+    'settings.sandboxEnable': 'ENABLE_SANDBOX — 启用沙箱环境运行代码',
+    'settings.sandboxPlatform': 'SANDBOX_PLATFORM — 沙箱平台',
+    'settings.daytonaApiKey': 'DAYTONA_API_KEY — Daytona API 密钥',
+    'settings.daytonaServerUrl': 'DAYTONA_SERVER_URL — Daytona 服务地址',
+    'settings.daytonaTimeout': 'DAYTONA_TIMEOUT — 命令超时',
+    'settings.daytonaTimeoutHint': '（秒）',
+    'settings.daytonaImage': 'DAYTONA_IMAGE — 沙箱镜像（snapshot）',
+    'settings.daytonaAutoStop': 'DAYTONA_AUTO_STOP_INTERVAL — 自动停止间隔',
+    'settings.daytonaAutoArchive': 'DAYTONA_AUTO_ARCHIVE_INTERVAL — 自动归档间隔',
+    'settings.daytonaAutoDelete': 'DAYTONA_AUTO_DELETE_INTERVAL — 自动删除间隔（归档后）',
+    'settings.daytonaMinutes': '（分钟）',
+    'settings.sandboxNote': '启用远程沙箱后，PythonExec / JSExec / Bash 都在 Daytona 容器内运行。每个对话一个沙箱，新建对话或关闭页面时自动销毁。工具调用前后会自动同步相关文件。',
     'settings.privacyNote': '设置（包括 S3 凭据与加密口令）仅保存在本地浏览器 localStorage。密钥只会发送到你配置的 API 端点或 S3 存储桶。',
     // Diagnostics
     'settings.diagnosticsHeader': '诊断',
@@ -3076,6 +3143,35 @@ function _loadProviders() {
 function _saveProviders(obj) { try { localStorage.setItem(PROVIDERS_KEY, JSON.stringify(obj)); } catch {} }
 function _genProviderId() { return 'prov_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
+// ── Sandbox config (local Pyodide/JS vs remote Daytona) ──────────
+const SANDBOX_CFG_KEY = 'ba_sandbox_config';
+const SANDBOX_DEFAULTS = Object.freeze({
+  enabled: false,                                  // ENABLE_SANDBOX
+  platform: 'daytona',                             // SANDBOX_PLATFORM
+  daytonaApiKey: '',                               // DAYTONA_API_KEY
+  daytonaServerUrl: 'https://app.daytona.io/api',  // DAYTONA_SERVER_URL  (sandbox lifecycle)
+  daytonaToolboxUrl: '',                           // optional explicit toolbox URL; auto-derived when blank
+  daytonaTimeout: 180,                             // DAYTONA_TIMEOUT  (seconds)
+  daytonaImage: 'daytonaio/sandbox:0.6.0',         // DAYTONA_IMAGE  (sent as `snapshot` to REST)
+  daytonaAutoStopInterval: 5,                      // DAYTONA_AUTO_STOP_INTERVAL    (minutes)
+  daytonaAutoArchiveInterval: 5,                   // DAYTONA_AUTO_ARCHIVE_INTERVAL (minutes)
+  daytonaAutoDeleteInterval: 1440,                 // DAYTONA_AUTO_DELETE_INTERVAL  (minutes)
+});
+function getSandboxConfig() {
+  try {
+    const raw = localStorage.getItem(SANDBOX_CFG_KEY);
+    if (raw) return Object.assign({}, SANDBOX_DEFAULTS, JSON.parse(raw));
+  } catch {}
+  return { ...SANDBOX_DEFAULTS };
+}
+function saveSandboxConfig(cfg) {
+  try { localStorage.setItem(SANDBOX_CFG_KEY, JSON.stringify(cfg || {})); } catch {}
+}
+function isRemoteSandbox() {
+  const c = getSandboxConfig();
+  return !!c.enabled && c.platform === 'daytona';
+}
+
 const REASONING_CONTENT_MODES = new Set(['auto', 'on', 'off']);
 function normalizeReasoningContentMode(mode) {
   const m = String(mode || 'auto').trim().toLowerCase();
@@ -3445,6 +3541,290 @@ async function fetchWithRetry(url, options = {}, retryOptions = {}) {
   }
   throw lastError || new Error('Network request failed');
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// REMOTE SANDBOX (Daytona) — one sandbox per conversation, lazy-created
+// ═══════════════════════════════════════════════════════════════════
+window._daytonaSessions = window._daytonaSessions || {}; // convId -> { sandboxId, createdAt, lastUsed, image }
+const _daytonaPending = {};                              // convId -> Promise<sandboxId>
+const DAYTONA_SYNC_MAX_FILES = 50;
+const DAYTONA_SYNC_MAX_BYTES = 5 * 1024 * 1024;
+
+function _daytonaHeaders(cfg, extra) {
+  return Object.assign({ 'Authorization': 'Bearer ' + (cfg.daytonaApiKey || '') }, extra || {});
+}
+function _daytonaApiBase(cfg) { return (cfg.daytonaServerUrl || SANDBOX_DEFAULTS.daytonaServerUrl).replace(/\/+$/, ''); }
+function _daytonaToolboxBase(cfg) {
+  if (cfg.daytonaToolboxUrl) return cfg.daytonaToolboxUrl.replace(/\/+$/, '');
+  // Daytona Cloud: lifecycle is app.daytona.io/api, toolbox is proxy.app.daytona.io.
+  // For self-hosted, default to <server>/proxy if not overridden.
+  const api = _daytonaApiBase(cfg);
+  const m = api.match(/^(https?:\/\/)app\.daytona\.io(?::\d+)?\/api$/);
+  if (m) return m[1] + 'proxy.app.daytona.io';
+  return api.replace(/\/api$/, '');
+}
+
+async function _daytonaApiFetch(cfg, path, opts = {}) {
+  const url = _daytonaApiBase(cfg) + path;
+  const headers = _daytonaHeaders(cfg, Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}));
+  return _daytonaDoFetch(url, Object.assign({}, opts, { headers }));
+}
+async function _daytonaToolboxFetch(cfg, sandboxId, path, opts = {}) {
+  const url = _daytonaToolboxBase(cfg) + '/toolbox/' + encodeURIComponent(sandboxId) + path;
+  const headers = _daytonaHeaders(cfg, opts.headers || {});
+  if (opts.body && !(opts.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  return _daytonaDoFetch(url, Object.assign({}, opts, { headers }));
+}
+async function _daytonaDoFetch(url, opts) {
+  const resp = await fetchWithRetry(url, opts, { retries: 2 });
+  if (!resp.ok) {
+    let body = '';
+    try { body = await resp.text(); } catch {}
+    throw new Error(`Daytona ${url.replace(/^https?:\/\/[^/]+/, '')}: HTTP ${resp.status} ${body.slice(0, 200)}`);
+  }
+  const ct = resp.headers.get('content-type') || '';
+  if (opts && opts._raw) return resp;
+  if (ct.includes('application/json')) return resp.json();
+  return resp.text();
+}
+
+const daytonaClient = {
+  async ensureSandbox(convId) {
+    const cfg = getSandboxConfig();
+    if (!cfg.daytonaApiKey) throw new Error('Daytona API key is not configured (Settings → Sandbox).');
+    const sess = window._daytonaSessions[convId];
+    if (sess && sess.sandboxId) { sess.lastUsed = Date.now(); return sess.sandboxId; }
+    if (_daytonaPending[convId]) return _daytonaPending[convId];
+    _daytonaPending[convId] = (async () => {
+      const body = { language: 'python' };
+      if (cfg.daytonaImage) body.snapshot = cfg.daytonaImage;
+      if (cfg.daytonaAutoStopInterval != null) body.autoStopInterval = Number(cfg.daytonaAutoStopInterval) || 0;
+      if (cfg.daytonaAutoArchiveInterval != null) body.autoArchiveInterval = Number(cfg.daytonaAutoArchiveInterval) || 0;
+      if (cfg.daytonaAutoDeleteInterval != null) body.autoDeleteInterval = Number(cfg.daytonaAutoDeleteInterval) || 0;
+      const r = await _daytonaApiFetch(cfg, '/sandbox', { method: 'POST', body: JSON.stringify(body) });
+      const sandboxId = r?.id || r?.sandboxId || r?.sandbox?.id;
+      if (!sandboxId) throw new Error('Daytona: missing sandbox id in create response');
+      window._daytonaSessions[convId] = { sandboxId, createdAt: Date.now(), lastUsed: Date.now(), image: cfg.daytonaImage || '' };
+      return sandboxId;
+    })().finally(() => { delete _daytonaPending[convId]; });
+    return _daytonaPending[convId];
+  },
+
+  async destroy(convId) {
+    const sess = window._daytonaSessions[convId];
+    if (!sess) return;
+    delete window._daytonaSessions[convId];
+    const cfg = getSandboxConfig();
+    if (!cfg.daytonaApiKey) return;
+    try { await _daytonaApiFetch(cfg, '/sandbox/' + encodeURIComponent(sess.sandboxId), { method: 'DELETE' }); }
+    catch (e) { console.warn('Daytona destroy failed:', e?.message || e); }
+  },
+
+  async writeFile(convId, path, content) {
+    const sandboxId = await this.ensureSandbox(convId);
+    const cfg = getSandboxConfig();
+    const bytes = content instanceof Uint8Array
+      ? content
+      : new TextEncoder().encode(String(content || ''));
+    const form = new FormData();
+    form.append('file', new Blob([bytes]), (path.split('/').pop() || 'file'));
+    await _daytonaToolboxFetch(cfg, sandboxId, '/files/upload?path=' + encodeURIComponent(path),
+      { method: 'POST', body: form });
+  },
+
+  async readFile(convId, path, asBytes = false) {
+    const sandboxId = await this.ensureSandbox(convId);
+    const cfg = getSandboxConfig();
+    const resp = await _daytonaToolboxFetch(cfg, sandboxId, '/files/download?path=' + encodeURIComponent(path),
+      { method: 'GET', _raw: true });
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    return asBytes ? buf : new TextDecoder().decode(buf);
+  },
+
+  // Recursive listing via `find` execed in the sandbox — much cheaper than walking /files endpoint.
+  async listChanged(convId, sinceMs) {
+    const sandboxId = await this.ensureSandbox(convId);
+    const cfg = getSandboxConfig();
+    const cmd = "find /workspace -type f -printf '%T@ %s %p\\n' 2>/dev/null | head -n 2000";
+    const r = await _daytonaToolboxFetch(cfg, sandboxId, '/process/execute',
+      { method: 'POST', body: JSON.stringify({ command: cmd, cwd: '/workspace', timeout: 30 }) });
+    const text = (r && (r.result ?? r.stdout ?? '')) || '';
+    const out = [];
+    for (const line of String(text).split('\n')) {
+      const m = line.match(/^(\d+(?:\.\d+)?)\s+(\d+)\s+(.+)$/);
+      if (!m) continue;
+      const mtime = Math.round(parseFloat(m[1]) * 1000);
+      if (sinceMs && mtime < sinceMs) continue;
+      out.push({ path: m[3], size: parseInt(m[2], 10) || 0, mtime });
+    }
+    return out;
+  },
+
+  // /process/execute uses timeout in SECONDS
+  async execShell(convId, command, opts = {}) {
+    const sandboxId = await this.ensureSandbox(convId);
+    const cfg = getSandboxConfig();
+    const timeoutSec = opts.timeout || Number(cfg.daytonaTimeout) || SANDBOX_DEFAULTS.daytonaTimeout;
+    const r = await _daytonaToolboxFetch(cfg, sandboxId, '/process/execute',
+      { method: 'POST', body: JSON.stringify({ command, cwd: opts.cwd || '/workspace', timeout: timeoutSec }) });
+    return _normalizeExecResult(r);
+  },
+
+  // /process/code-run uses timeout in MILLISECONDS
+  async execPython(convId, code, opts = {}) {
+    const sandboxId = await this.ensureSandbox(convId);
+    const cfg = getSandboxConfig();
+    const timeoutMs = (opts.timeout || Number(cfg.daytonaTimeout) || SANDBOX_DEFAULTS.daytonaTimeout) * 1000;
+    const body = { code, timeout: timeoutMs };
+    if (opts.env && typeof opts.env === 'object') body.env = opts.env;
+    const r = await _daytonaToolboxFetch(cfg, sandboxId, '/process/code-run',
+      { method: 'POST', body: JSON.stringify(body) });
+    return _normalizeExecResult(r);
+  },
+
+  async execNode(convId, code, opts = {}) {
+    const sandboxId = await this.ensureSandbox(convId);
+    const cfg = getSandboxConfig();
+    const tmp = '/tmp/__onepagent_snippet_' + Date.now() + '.js';
+    await this.writeFile(convId, tmp, code);
+    const timeoutSec = opts.timeout || Number(cfg.daytonaTimeout) || SANDBOX_DEFAULTS.daytonaTimeout;
+    const r = await _daytonaToolboxFetch(cfg, sandboxId, '/process/execute',
+      { method: 'POST', body: JSON.stringify({ command: 'node ' + tmp, cwd: opts.cwd || '/workspace', timeout: timeoutSec }) });
+    return _normalizeExecResult(r);
+  },
+};
+
+function _normalizeExecResult(r) {
+  if (!r || typeof r !== 'object') return { stdout: String(r ?? ''), stderr: '', exitCode: 0 };
+  // Daytona REST uses { result, exitCode }; some toolbox responses use stdout/stderr.
+  const stdout = r.stdout ?? r.result ?? r.output ?? '';
+  const stderr = r.stderr ?? r.error ?? '';
+  const exitCode = (r.exitCode ?? r.exit_code ?? r.code ?? 0) | 0;
+  return { stdout: String(stdout || ''), stderr: String(stderr || ''), exitCode };
+}
+
+function _u8ToBase64(u8) {
+  let s = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < u8.length; i += chunk) s += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
+  return btoa(s);
+}
+function _base64ToU8(b64) {
+  try {
+    const bin = atob(b64 || '');
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  } catch { return new Uint8Array(0); }
+}
+
+// ── Track files touched in the current conversation so syncIn can pre-upload them
+const _remoteRecentlyTouched = new Set();
+function markVfsTouched(p) {
+  if (!p) return;
+  try { _remoteRecentlyTouched.add(normPath(p)); } catch { _remoteRecentlyTouched.add(p); }
+  if (_remoteRecentlyTouched.size > 500) {
+    const first = _remoteRecentlyTouched.values().next().value;
+    _remoteRecentlyTouched.delete(first);
+  }
+}
+
+function _extractVfsPathsFromInput(input) {
+  const out = new Set();
+  const walk = v => {
+    if (v == null) return;
+    if (typeof v === 'string') {
+      const re = /\/[A-Za-z0-9_.\-/]{1,200}/g;
+      const m = v.match(re);
+      if (m) m.forEach(p => out.add(p));
+    } else if (Array.isArray(v)) v.forEach(walk);
+    else if (typeof v === 'object') Object.values(v).forEach(walk);
+  };
+  walk(input);
+  return [...out];
+}
+
+async function syncVfsToRemote(convId, input) {
+  const candidates = new Set([..._extractVfsPathsFromInput(input), ..._remoteRecentlyTouched]);
+  let pushed = 0, bytesPushed = 0;
+  for (const p of candidates) {
+    if (pushed >= DAYTONA_SYNC_MAX_FILES || bytesPushed >= DAYTONA_SYNC_MAX_BYTES) break;
+    const st = vfsStat(p);
+    if (!st || st.type !== 'file') continue;
+    try {
+      if (st.binary) {
+        const bytes = await vfsGetBinary(p);
+        if (!bytes) continue;
+        if (bytesPushed + bytes.length > DAYTONA_SYNC_MAX_BYTES) continue;
+        await daytonaClient.writeFile(convId, '/workspace' + p, bytes);
+        bytesPushed += bytes.length;
+      } else {
+        const r = vfsRead(p);
+        if (r.error) continue;
+        const bytes = new TextEncoder().encode(r.content || '');
+        if (bytesPushed + bytes.length > DAYTONA_SYNC_MAX_BYTES) continue;
+        await daytonaClient.writeFile(convId, '/workspace' + p, r.content);
+        bytesPushed += bytes.length;
+      }
+      pushed++;
+    } catch (e) { console.warn('syncIn skip', p, e?.message || e); }
+  }
+  return { pushed, bytesPushed };
+}
+
+async function syncVfsFromRemote(convId, sinceMs) {
+  let changed;
+  try { changed = await daytonaClient.listChanged(convId, sinceMs); }
+  catch (e) { console.warn('listChanged failed:', e?.message || e); return { pulled: 0 }; }
+  let pulled = 0;
+  for (const f of changed) {
+    if (pulled >= DAYTONA_SYNC_MAX_FILES) break;
+    const remotePath = f.path;
+    if (!remotePath || !remotePath.startsWith('/workspace/')) continue;
+    const localPath = remotePath.slice('/workspace'.length) || '/';
+    try {
+      const bytes = await daytonaClient.readFile(convId, remotePath, true);
+      const isText = _looksLikeText(bytes);
+      if (isText) {
+        const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+        vfsWrite(localPath, text);
+      } else {
+        await vfsWriteBinary(localPath, bytes);
+      }
+      markVfsTouched(localPath);
+      pulled++;
+    } catch (e) { console.warn('syncOut skip', remotePath, e?.message || e); }
+  }
+  return { pulled };
+}
+
+function _looksLikeText(bytes) {
+  if (!bytes || !bytes.length) return true;
+  const sample = bytes.subarray(0, Math.min(bytes.length, 1024));
+  let nonText = 0;
+  for (const b of sample) {
+    if (b === 0) return false;
+    if (b < 9 || (b > 13 && b < 32 && b !== 27)) nonText++;
+  }
+  return nonText / sample.length < 0.05;
+}
+
+// Best-effort cleanup of all live remote sandboxes on tab close.
+window.addEventListener('beforeunload', () => {
+  const cfg = getSandboxConfig();
+  if (!cfg.enabled || cfg.platform !== 'daytona' || !cfg.daytonaApiKey) return;
+  const base = (cfg.daytonaServerUrl || SANDBOX_DEFAULTS.daytonaServerUrl).replace(/\/+$/, '');
+  for (const sess of Object.values(window._daytonaSessions || {})) {
+    if (!sess?.sandboxId) continue;
+    try {
+      fetch(base + '/sandbox/' + encodeURIComponent(sess.sandboxId), {
+        method: 'DELETE',
+        keepalive: true,
+        headers: { 'Authorization': 'Bearer ' + cfg.daytonaApiKey },
+      });
+    } catch {}
+  }
+});
 
 // ── Model list fetching ─────────────────────────────────────────
 async function fetchModelList() {
@@ -4477,6 +4857,10 @@ async function saveCurrentConv(andRenderList) {
 
 function newConversation(skipSave, folderId) {
   if (!skipSave) saveCurrentConv();
+  if (activeConvId && window._daytonaSessions && window._daytonaSessions[activeConvId]) {
+    daytonaClient.destroy(activeConvId).catch(() => {});
+  }
+  _remoteRecentlyTouched.clear();
   const id = genConvId();
   const meta = { id, title: 'New Chat', titleSource: 'default', titleStatus: 'idle', titlePromptHash: '', created: Date.now(), updated: Date.now(), loopCount: 0, totalTokens: 0, contextTokens: 0, messageCount: 0 };
   if (folderId && convFolders.some(f => f.id === folderId)) {
@@ -4582,6 +4966,9 @@ async function switchConversation(id, skipSave) {
 
 async function deleteConversation(id) {
   if (isGenerating) return;
+  if (window._daytonaSessions && window._daytonaSessions[id]) {
+    daytonaClient.destroy(id).catch(() => {});
+  }
   convHistory = convHistory.filter(c => c.id !== id);
   await deleteConvDataFromDB(id);
   if (activeConvId === id) {
@@ -6277,6 +6664,49 @@ async function toolJSExec(input) {
     const output = logs.length ? logs.join('\n') + '\n' : '';
     return `${output}Error: ${e.message}`;
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// REMOTE TOOL WRAPPERS — route PythonExec/JSExec/Bash to Daytona
+// ═══════════════════════════════════════════════════════════════════
+async function _remoteWrap(input, exec) {
+  if (!activeConvId) return 'Error: no active conversation to bind a remote sandbox to.';
+  const convId = activeConvId;
+  const t0 = Date.now();
+  try { await syncVfsToRemote(convId, input); } catch (e) { return 'Error (sandbox syncIn): ' + (e.message || e); }
+  let res;
+  try { res = await exec(convId); }
+  catch (e) { return 'Error (sandbox exec): ' + (e.message || e); }
+  try { await syncVfsFromRemote(convId, t0 - 1000); } catch (e) { console.warn('syncOut failed:', e?.message || e); }
+  const { stdout = '', stderr = '', exitCode = 0 } = res || {};
+  if (exitCode && !stdout && !stderr) return `Exit ${exitCode}`;
+  const parts = [];
+  if (stdout) parts.push(stdout);
+  if (stderr) parts.push((stdout ? '\n' : '') + 'stderr:\n' + stderr);
+  if (exitCode) parts.push(`\n[exit ${exitCode}]`);
+  return parts.join('') || '(no output)';
+}
+async function toolPythonExecRemote(input) {
+  const code = input?.code || '';
+  if (!code) return 'Error: code is required.';
+  const pkgs = Array.isArray(input?.packages) ? input.packages : [];
+  return _remoteWrap(input, async (convId) => {
+    if (pkgs.length) {
+      const r = await daytonaClient.execShell(convId, 'pip install --quiet ' + pkgs.map(p => `'${String(p).replace(/'/g, "'\\''")}'`).join(' '));
+      if (r.exitCode) return { stdout: r.stdout, stderr: 'pip install failed:\n' + r.stderr, exitCode: r.exitCode };
+    }
+    return daytonaClient.execPython(convId, code);
+  });
+}
+async function toolJSExecRemote(input) {
+  const code = input?.code || '';
+  if (!code) return 'Error: code is required.';
+  return _remoteWrap(input, (convId) => daytonaClient.execNode(convId, code));
+}
+async function toolBashRemote(input) {
+  const cmd = (input?.command || '').trim();
+  if (!cmd) return '';
+  return _remoteWrap(input, (convId) => daytonaClient.execShell(convId, cmd));
 }
 
 function _truncateNodeOutput(text) {
@@ -8043,7 +8473,24 @@ function openSettingsModal() {
   document.getElementById('setS3AutoPush').checked = !!s3.autoPush;
   document.getElementById('setS3PathStyle').checked = s3.forcePathStyle !== false;
   document.getElementById('s3Status').textContent = '';
+  // Sandbox
+  const sb = getSandboxConfig();
+  document.getElementById('setSandboxEnabled').checked = !!sb.enabled;
+  document.getElementById('setSandboxPlatform').value = sb.platform || 'daytona';
+  document.getElementById('setDaytonaApiKey').value = sb.daytonaApiKey || '';
+  document.getElementById('setDaytonaServerUrl').value = sb.daytonaServerUrl || SANDBOX_DEFAULTS.daytonaServerUrl;
+  document.getElementById('setDaytonaTimeout').value = sb.daytonaTimeout ?? SANDBOX_DEFAULTS.daytonaTimeout;
+  document.getElementById('setDaytonaImage').value = sb.daytonaImage || '';
+  document.getElementById('setDaytonaAutoStop').value = sb.daytonaAutoStopInterval ?? SANDBOX_DEFAULTS.daytonaAutoStopInterval;
+  document.getElementById('setDaytonaAutoArchive').value = sb.daytonaAutoArchiveInterval ?? SANDBOX_DEFAULTS.daytonaAutoArchiveInterval;
+  document.getElementById('setDaytonaAutoDelete').value = sb.daytonaAutoDeleteInterval ?? SANDBOX_DEFAULTS.daytonaAutoDeleteInterval;
+  onSandboxProviderChange();
   document.getElementById('settingsModal').classList.add('show');
+}
+function onSandboxProviderChange() {
+  const enabled = document.getElementById('setSandboxEnabled').checked;
+  const platform = document.getElementById('setSandboxPlatform').value;
+  document.getElementById('setSandboxDaytonaBox').style.display = (enabled && platform === 'daytona') ? '' : 'none';
 }
 function closeSettingsModal() { document.getElementById('settingsModal').classList.remove('show'); }
 
@@ -8503,6 +8950,27 @@ async function saveSettings() {
     try { _swReady = await initServiceWorker(_keys); } catch (e) { console.warn(e); }
   }
   _saveS3CfgFromModal();
+  // Sandbox config
+  const prevSandbox = getSandboxConfig();
+  const _numOr = (id, def) => { const v = parseFloat(document.getElementById(id).value); return Number.isFinite(v) ? v : def; };
+  const newSandbox = {
+    enabled: document.getElementById('setSandboxEnabled').checked,
+    platform: document.getElementById('setSandboxPlatform').value || 'daytona',
+    daytonaApiKey: document.getElementById('setDaytonaApiKey').value.trim(),
+    daytonaServerUrl: document.getElementById('setDaytonaServerUrl').value.trim() || SANDBOX_DEFAULTS.daytonaServerUrl,
+    daytonaTimeout: _numOr('setDaytonaTimeout', SANDBOX_DEFAULTS.daytonaTimeout),
+    daytonaImage: document.getElementById('setDaytonaImage').value.trim(),
+    daytonaAutoStopInterval: _numOr('setDaytonaAutoStop', SANDBOX_DEFAULTS.daytonaAutoStopInterval),
+    daytonaAutoArchiveInterval: _numOr('setDaytonaAutoArchive', SANDBOX_DEFAULTS.daytonaAutoArchiveInterval),
+    daytonaAutoDeleteInterval: _numOr('setDaytonaAutoDelete', SANDBOX_DEFAULTS.daytonaAutoDeleteInterval),
+  };
+  saveSandboxConfig(newSandbox);
+  const wasRemote = !!prevSandbox.enabled && prevSandbox.platform === 'daytona';
+  const nowRemote = newSandbox.enabled && newSandbox.platform === 'daytona';
+  if (wasRemote && !nowRemote && activeConvId) {
+    daytonaClient.destroy(activeConvId).catch(() => {});
+  }
+  rebuildToolDefs();
   closeSettingsModal();
   appendSystemMsg('Settings saved.');
 }
@@ -11621,6 +12089,7 @@ function getEnabledToolsAnthropic() { return allToolsAnthropic.filter(t => !disa
 function getEnabledToolsOpenAI() { return allToolsOpenAI.filter(t => !disabledTools.has(t.function.name)); }
 
 function rebuildToolDefs(headId = activeEntryId, options = {}) {
+  const _remote = isRemoteSandbox();
   allToolsAnthropic = BASE_TOOLS_ANTHROPIC.filter(t => {
     // TodoWrite and ExitPlanMode are plan-mode-only tools
     if (t.name === 'TodoWrite' || t.name === 'ExitPlanMode') return planMode;
@@ -11630,7 +12099,17 @@ function rebuildToolDefs(headId = activeEntryId, options = {}) {
     if (t.name === 'SwarmSpawn' || t.name === 'SwarmStatus' || t.name === 'SwarmAbort' || t.name === 'SwarmHandoff') return !!swarmSettings.enabled;
     if (t.name === 'RoleManager') return !!swarmSettings.enabled && !!swarmSettings.roleManagerEnabled;
     if (t.name === 'bb_write' || t.name === 'bb_read' || t.name === 'bb_list' || t.name === 'bb_post_task' || t.name === 'bb_claim') return !!swarmSettings.enabled;
+    // Bash only exposed when a real shell is available (remote sandbox).
+    if (t.name === 'Bash') return _remote;
+    // Pyodide-only path tools make no sense in remote mode.
+    if (_remote && (t.name === 'VfsToPyodide' || t.name === 'PyodideToVfs' || t.name === 'NodeExec')) return false;
     return true;
+  }).map(t => {
+    if (!_remote) return t;
+    if (t.name === 'PythonExec') return { ...t, description: 'Execute Python code in a remote Daytona sandbox (real Linux container with full Python). The workspace is mounted at /workspace and mirrors files referenced in tool input (auto-synced before and after). Use normal file APIs (open, pathlib, os). pip-installed packages persist for the conversation. Use the packages argument to install pip dependencies.', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'Python code to run.' }, packages: { type: 'array', items: { type: 'string' }, description: 'pip packages to install before running.' } }, required: ['code'] } };
+    if (t.name === 'JSExec') return { ...t, description: 'Execute JavaScript / Node.js code in a remote Daytona sandbox. Use normal Node APIs (fs, path, fetch). Workspace at /workspace.', input_schema: { type: 'object', properties: { code: { type: 'string', description: 'JavaScript/Node code to run.' } }, required: ['code'] } };
+    if (t.name === 'Bash') return { ...t, description: 'Execute a real shell command in the remote Daytona sandbox (Linux). Working directory defaults to /workspace. Full POSIX coreutils and any installed tools available.', input_schema: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to execute.' } }, required: ['command'] } };
+    return t;
   });
   if (pyodideInstance) allToolsAnthropic.push(...PYODIDE_NATIVE_TOOLS);
   skillToolHandlers = {};
@@ -11687,15 +12166,15 @@ async function executeTool(name, input) {
     flashTool(name);
     switch (name) {
       case 'Read': return toolRead(input);
-      case 'Write': return toolWrite(input);
-      case 'Edit': return toolEdit(input);
+      case 'Write': { const r = toolWrite(input); if (input?.file_path) markVfsTouched(input.file_path); return r; }
+      case 'Edit': { const r = toolEdit(input); if (input?.file_path) markVfsTouched(input.file_path); return r; }
       case 'Glob': return toolGlob(input);
       case 'Grep': return toolGrep(input);
-      case 'Bash': return await toolBash(input);
-      case 'PythonExec': return await toolPythonExec(input);
+      case 'Bash': return await (isRemoteSandbox() ? toolBashRemote(input) : toolBash(input));
+      case 'PythonExec': return await (isRemoteSandbox() ? toolPythonExecRemote(input) : toolPythonExec(input));
       case 'VfsToPyodide': return pyodideInstance ? await toolVfsToPyodide(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
       case 'PyodideToVfs': return pyodideInstance ? await toolPyodideToVfs(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
-      case 'JSExec': return await toolJSExec(input);
+      case 'JSExec': return await (isRemoteSandbox() ? toolJSExecRemote(input) : toolJSExec(input));
       case 'NodeExec': return await toolNodeExec(input);
       case 'WebSearch': return await toolWebSearch(input);
       case 'Fetch': return await toolFetch(input);
@@ -14156,14 +14635,15 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   const pyodideNativePrompt = getPyodideNativeToolPrompt();
   const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools, or SkillManager write actions). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch), SkillManager list/inspect, and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
   const ralphPrompt = getRalphLoopPrompt();
+  const sandboxPrompt = isRemoteSandbox() ? '\n\n[REMOTE SANDBOX]\nPythonExec / JSExec / Bash execute inside a real Linux container (Daytona). Workspace mounted at /workspace. Use ordinary file APIs, pip/npm, and shell utilities freely — Pyodide-specific bridges (workspacefs, vfsRead/vfsWrite) do NOT apply here. Files referenced in tool input are auto-synced into the sandbox before each run and pulled back after.' : '';
   const memPrompt = await getCachedMemRecallForPrompt(projectedMessagesBase, { readOnly: !!options.readOnlyMemory, memoryRecallKey: options.memoryRecallKey });
   rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });
   const anthropicTools = getEnabledToolsAnthropic();
   const openaiTools = getEnabledToolsOpenAI();
   const stableSystemPrompt = contextEditor + activeSkillMetadata;
-  const volatileSystemPrompt = triggeredSkillPrompts + mediaToolPrompt + pyodideNativePrompt + planPrompt + ralphPrompt + memPrompt;
+  const volatileSystemPrompt = triggeredSkillPrompts + mediaToolPrompt + pyodideNativePrompt + planPrompt + ralphPrompt + sandboxPrompt + memPrompt;
   const systemPrompt = stableSystemPrompt + volatileSystemPrompt;
-  return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, beijingTime, runtimeReminder, mediaToolPrompt, pyodideNativePrompt, planPrompt, ralphPrompt, memPrompt, stableSystemPrompt, volatileSystemPrompt, systemPrompt, anthropicTools, openaiTools, headId };
+  return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, beijingTime, runtimeReminder, mediaToolPrompt, pyodideNativePrompt, planPrompt, ralphPrompt, sandboxPrompt, memPrompt, stableSystemPrompt, volatileSystemPrompt, systemPrompt, anthropicTools, openaiTools, headId };
 }
 function buildAnthropicSystemForCache(parts) {
   const blocks = [];
