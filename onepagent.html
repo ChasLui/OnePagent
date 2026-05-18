@@ -1708,7 +1708,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <input type="number" id="setDaytonaAutoDelete" min="0" placeholder="1440">
           </div>
         </div>
-        <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-top:4px" data-i18n="settings.sandboxNote">When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. The whole VFS is mirrored to /home/daytona before each call and pulled back after. One sandbox per conversation, auto-destroyed on new conversation or page unload.</div>
+        <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-top:4px" data-i18n="settings.sandboxNote">When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. The VFS is uploaded to /home/daytona before each call; only files written under /home/daytona/outputs are pulled back to VFS /outputs after the call. Put final results in /home/daytona/outputs.</div>
         <div style="display:flex;gap:6px;align-items:center;margin-top:8px">
           <button type="button" class="modal-btn secondary" id="setSandboxTestBtn" onclick="testDaytonaSandbox()" style="padding:6px 10px;font-size:11px" data-i18n="settings.sandboxTest">Test sandbox</button>
           <div id="setSandboxTestStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;flex:1;white-space:pre-wrap;word-break:break-word"></div>
@@ -2322,7 +2322,7 @@ const I18N = {
     'settings.daytonaAutoArchive': 'DAYTONA_AUTO_ARCHIVE_INTERVAL',
     'settings.daytonaAutoDelete': 'DAYTONA_AUTO_DELETE_INTERVAL',
     'settings.daytonaMinutes': '(min)',
-    'settings.sandboxNote': 'When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. The whole VFS is mirrored to /home/daytona before each call and pulled back after. One sandbox per conversation, auto-destroyed on new conversation or page unload.',
+    'settings.sandboxNote': 'When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. The VFS is uploaded to /home/daytona before each call; only files written under /home/daytona/outputs are pulled back to VFS /outputs after the call. Put final results in /home/daytona/outputs.',
     'settings.sandboxTest': 'Test sandbox',
     'settings.sandboxTestRunning': 'Creating sandbox and running echo + uname …',
     'settings.sandboxTestOk': 'Sandbox OK',
@@ -2752,7 +2752,7 @@ const I18N = {
     'settings.daytonaAutoArchive': 'DAYTONA_AUTO_ARCHIVE_INTERVAL — 自动归档间隔',
     'settings.daytonaAutoDelete': 'DAYTONA_AUTO_DELETE_INTERVAL — 自动删除间隔（归档后）',
     'settings.daytonaMinutes': '（分钟）',
-    'settings.sandboxNote': '启用远程沙箱后，仅暴露 Bash，运行在 Daytona Linux 容器内；PythonExec / JSExec / NodeExec / Pyodide 工具会被隐藏 —— 通过 Bash 调用 python3 / node / pip 等。整个 VFS 在每次调用前镜像到 /home/daytona，调用后拉回。每个对话一个沙箱，新建对话或关闭页面时自动销毁。',
+    'settings.sandboxNote': '启用远程沙箱后，仅暴露 Bash，运行在 Daytona Linux 容器内；PythonExec / JSExec / NodeExec / Pyodide 工具会被隐藏 —— 通过 Bash 调用 python3 / node / pip 等。每次调用前会将 VFS 上传到 /home/daytona；调用后只会把 /home/daytona/outputs 下的文件拉回到 VFS /outputs。最终结果请输出到 /home/daytona/outputs。',
     'settings.sandboxTest': '测试沙箱',
     'settings.sandboxTestRunning': '正在创建沙箱并运行 echo + uname …',
     'settings.sandboxTestOk': '沙箱可用',
@@ -3577,7 +3577,9 @@ const _daytonaPending = {};                              // convId -> Promise<sa
 // /workspace does NOT exist — passing it as cwd makes the daemon silently
 // return { exitCode: -1, result: "" }. Anchor all paths in /home/daytona instead.
 const DAYTONA_WORKSPACE = '/home/daytona';
-// Generous safety caps — the user expects the full VFS to live in the sandbox.
+const DAYTONA_OUTPUTS_VFS_PREFIX = '/outputs';
+const DAYTONA_OUTPUTS_REMOTE_PREFIX = DAYTONA_WORKSPACE + DAYTONA_OUTPUTS_VFS_PREFIX;
+// Safety caps for per-call VFS upload and outputs-only pullback.
 const DAYTONA_SYNC_MAX_FILES = 2000;
 const DAYTONA_SYNC_MAX_BYTES = 100 * 1024 * 1024;
 // Paths excluded from sync (large or session-local).
@@ -3586,6 +3588,9 @@ function _shouldSkipSyncPath(p) {
   if (!p || p === '/') return true;
   for (const pre of DAYTONA_SYNC_SKIP_PREFIXES) if (p.startsWith(pre)) return true;
   return false;
+}
+function _isDaytonaOutputsPath(p) {
+  return p === DAYTONA_OUTPUTS_VFS_PREFIX || p.startsWith(DAYTONA_OUTPUTS_VFS_PREFIX + '/');
 }
 
 function _daytonaHeaders(cfg, extra) {
@@ -3751,11 +3756,11 @@ const daytonaClient = {
     return asBytes ? buf : new TextDecoder().decode(buf);
   },
 
-  // Recursive listing via `find` execed in the sandbox — much cheaper than walking /files endpoint.
+  // Recursive listing via `find` execed in the sandbox — restricted to outputs.
   async listChanged(convId, sinceMs) {
     const sandboxId = await this.ensureSandbox(convId);
     const cfg = getSandboxConfig();
-    const cmd = "find " + DAYTONA_WORKSPACE + " -type f -printf '%T@ %s %p\\n' 2>/dev/null | head -n 2000";
+    const cmd = "mkdir -p " + DAYTONA_OUTPUTS_REMOTE_PREFIX + " && find " + DAYTONA_OUTPUTS_REMOTE_PREFIX + " -type f -printf '%T@ %s %p\\n' 2>/dev/null | head -n 2000";
     const r = await _daytonaToolboxFetch(cfg, sandboxId, '/process/execute',
       { method: 'POST', body: JSON.stringify({ command: cmd, cwd: DAYTONA_WORKSPACE, timeout: 30 }) });
     const text = (r && (r.result ?? r.stdout ?? '')) || '';
@@ -3889,8 +3894,8 @@ async function syncVfsToRemote(convId, _input) {
   return { pushed, skipped, bytesPushed };
 }
 
-// Pull every file from the sandbox workspace that is newer than the last seen
-// mtime (or unknown locally). Apply changes to the VFS.
+// Pull only result files under /outputs from the sandbox workspace. Other
+// sandbox changes stay remote and are not mirrored back into the VFS.
 async function syncVfsFromRemote(convId, _sinceMs) {
   const sess = window._daytonaSessions[convId];
   if (!sess) return { pulled: 0, skipped: 0 };
@@ -3905,6 +3910,7 @@ async function syncVfsFromRemote(convId, _sinceMs) {
     const remotePath = f.path;
     if (!remotePath || !remotePath.startsWith(DAYTONA_WORKSPACE + '/')) continue;
     const localPath = remotePath.slice(DAYTONA_WORKSPACE.length) || '/';
+    if (!_isDaytonaOutputsPath(localPath)) continue;
     if (_shouldSkipSyncPath(localPath)) continue;
     seen.add(remotePath);
     const prevMtime = sess.syncedOut.get(remotePath) || 0;
@@ -12305,13 +12311,12 @@ function rebuildToolDefs(headId = activeEntryId, options = {}) {
     return true;
   }).map(t => {
     if (!_remote) return t;
-    if (t.name === 'Bash') return { ...t, description: 'Execute a real shell command in the remote Daytona sandbox (Linux container). Working directory defaults to /home/daytona, which mirrors the entire VFS (files are uploaded before the run and pulled back after). Use this for everything: shell utilities, python3 / pip, node / npm, file ops, network calls, etc. Pip/npm installs and any /home/daytona changes persist across calls within the same conversation.', input_schema: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to execute.' } }, required: ['command'] } };
-    // File-system tools stay on the local VFS, but the VFS is the authoritative
-    // mirror of /home/daytona in the sandbox: writes flow to the sandbox before
-    // the next Bash call, sandbox writes flow back after each call. Add a
-    // clarifying suffix so the model knows the path mapping (VFS /foo ↔ sandbox
-    // /home/daytona/foo).
-    const remoteFsNote = ' Remote sandbox mode: the VFS path you pass here maps to /home/daytona<vfs path> inside the Daytona container (e.g. /data.csv ↔ /home/daytona/data.csv). Changes made via Bash to /home/daytona files automatically appear in the VFS after that Bash call returns, and edits via this tool are pushed to the sandbox before the next Bash call.';
+    if (t.name === 'Bash') return { ...t, description: 'Execute a real shell command in the remote Daytona sandbox (Linux container). Working directory defaults to /home/daytona. The VFS is uploaded before the run; after the run, only files under /home/daytona/outputs are pulled back into VFS /outputs. Put final result files in /home/daytona/outputs so the user can inspect or download them. Use this for everything: shell utilities, python3 / pip, node / npm, file ops, network calls, etc. Pip/npm installs and /home/daytona changes persist across calls within the same conversation.', input_schema: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to execute.' } }, required: ['command'] } };
+    // File-system tools stay on the local VFS. Their writes flow to the sandbox
+    // before the next Bash call; only /home/daytona/outputs flows back after
+    // Bash. Add a clarifying suffix so the model knows the path mapping
+    // (VFS /foo ↔ sandbox /home/daytona/foo).
+    const remoteFsNote = ' Remote sandbox mode: the VFS path you pass here maps to /home/daytona<vfs path> inside the Daytona container (e.g. /data.csv ↔ /home/daytona/data.csv). Edits via this tool are pushed to the sandbox before the next Bash call. After Bash returns, only /home/daytona/outputs is synced back to VFS /outputs, so final result files should be written under /home/daytona/outputs in Bash or /outputs via VFS tools.';
     if (t.name === 'Read' || t.name === 'Write' || t.name === 'Edit' || t.name === 'Glob' || t.name === 'Grep') {
       return { ...t, description: (t.description || '') + remoteFsNote };
     }
@@ -14847,7 +14852,7 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   const pyodideNativePrompt = getPyodideNativeToolPrompt();
   const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools, or SkillManager write actions). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch), SkillManager list/inspect, and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
   const ralphPrompt = getRalphLoopPrompt();
-  const sandboxPrompt = isRemoteSandbox() ? '\n\n[REMOTE SANDBOX]\nA real Linux container (Daytona) is attached. Your execution surface in this mode:\n- **Bash** is the ONLY code-execution tool. Run interpreters from the shell: `python3 script.py`, `python3 -c "..."`, `node script.js`, `pip install ...`, `npm install ...`. Pip/npm installs and /home/daytona changes persist across Bash calls within this conversation.\n- **Read / Write / Edit / Glob / Grep** operate on the VFS, which is mirrored to /home/daytona in the sandbox: the entire VFS is uploaded before every Bash call, and any changes you make under /home/daytona via Bash are pulled back into the VFS after the call returns. A file written by Bash to /home/daytona/out.txt is immediately readable via Read("/out.txt"), and a Write/Edit you do here appears at /home/daytona/<path> in the next Bash call.\n- **PythonExec / JSExec / NodeExec / VfsToPyodide / PyodideToVfs are DISABLED.** Do not mention them in tool lists or attempt to call them — they are intentionally hidden because the sandbox is a full Linux container and Bash covers every case.\n- Path mapping: VFS `/foo/bar.py` ↔ sandbox `/home/daytona/foo/bar.py`. cwd for Bash defaults to /home/daytona. Do NOT pass cwd=/workspace — that directory does not exist in the Daytona default snapshot and the daemon will silently return exit -1 with an empty body.\nWhen the user asks "what tools do you have", list ONLY the tools that are actually exposed in this request — do not enumerate disabled tools.' : '';
+  const sandboxPrompt = isRemoteSandbox() ? '\n\n[REMOTE SANDBOX]\nA real Linux container (Daytona) is attached. Your execution surface in this mode:\n- **Bash** is the ONLY code-execution tool. Run interpreters from the shell: `python3 script.py`, `python3 -c "..."`, `node script.js`, `pip install ...`, `npm install ...`. Pip/npm installs and /home/daytona changes persist across Bash calls within this conversation.\n- **Read / Write / Edit / Glob / Grep** operate on the browser VFS. Before every Bash call, the VFS is uploaded to /home/daytona so files are available in the sandbox. After Bash returns, only files under /home/daytona/outputs are pulled back into the VFS as /outputs; other sandbox changes remain remote. In Bash, write final result files, reports, exports, generated media, and artifacts under /home/daytona/outputs (or relative outputs/ from cwd) so the user can inspect or download them.\n- **PythonExec / JSExec / NodeExec / VfsToPyodide / PyodideToVfs are DISABLED.** Do not mention them in tool lists or attempt to call them — they are intentionally hidden because the sandbox is a full Linux container and Bash covers every case.\n- Path mapping: VFS `/foo/bar.py` ↔ sandbox `/home/daytona/foo/bar.py`. cwd for Bash defaults to /home/daytona. Do NOT pass cwd=/workspace — that directory does not exist in the Daytona default snapshot and the daemon will silently return exit -1 with an empty body.\nWhen the user asks "what tools do you have", list ONLY the tools that are actually exposed in this request — do not enumerate disabled tools.' : '';
   const memPrompt = await getCachedMemRecallForPrompt(projectedMessagesBase, { readOnly: !!options.readOnlyMemory, memoryRecallKey: options.memoryRecallKey });
   rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });
   const anthropicTools = getEnabledToolsAnthropic();
