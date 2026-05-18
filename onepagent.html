@@ -3670,12 +3670,12 @@ const daytonaClient = {
     return _normalizeExecResult(r);
   },
 
-  // /process/code-run uses timeout in MILLISECONDS
+  // /process/code-run uses timeout in MILLISECONDS and requires `language`
   async execPython(convId, code, opts = {}) {
     const sandboxId = await this.ensureSandbox(convId);
     const cfg = getSandboxConfig();
     const timeoutMs = (opts.timeout || Number(cfg.daytonaTimeout) || SANDBOX_DEFAULTS.daytonaTimeout) * 1000;
-    const body = { code, timeout: timeoutMs };
+    const body = { code, language: opts.language || 'python', timeout: timeoutMs };
     if (opts.env && typeof opts.env === 'object') body.env = opts.env;
     const r = await _daytonaToolboxFetch(cfg, sandboxId, '/process/code-run',
       { method: 'POST', body: JSON.stringify(body) });
