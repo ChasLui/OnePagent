@@ -1690,8 +1690,8 @@ document.addEventListener('DOMContentLoaded', function() {
             <input type="number" id="setDaytonaTimeout" min="1" placeholder="180">
           </div>
           <div>
-            <label data-i18n="settings.daytonaImage">DAYTONA_IMAGE</label>
-            <input type="text" id="setDaytonaImage" placeholder="daytonaio/sandbox:0.6.0">
+            <label><span data-i18n="settings.daytonaImage">DAYTONA_IMAGE</span> <span style="text-transform:none;color:var(--text-dim)" data-i18n="settings.daytonaImageHint">(optional)</span></label>
+            <input type="text" id="setDaytonaImage" placeholder="(empty = Daytona default)" data-i18n-placeholder="settings.daytonaImagePh">
           </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
@@ -1709,6 +1709,10 @@ document.addEventListener('DOMContentLoaded', function() {
           </div>
         </div>
         <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-top:4px" data-i18n="settings.sandboxNote">When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. The whole VFS is mirrored to /workspace before each call and pulled back after. One sandbox per conversation, auto-destroyed on new conversation or page unload.</div>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:8px">
+          <button type="button" class="modal-btn secondary" id="setSandboxTestBtn" onclick="testDaytonaSandbox()" style="padding:6px 10px;font-size:11px" data-i18n="settings.sandboxTest">Test sandbox</button>
+          <div id="setSandboxTestStatus" style="font-size:10px;color:var(--text-dim);min-height:14px;flex:1;white-space:pre-wrap;word-break:break-word"></div>
+        </div>
       </div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
@@ -2312,11 +2316,17 @@ const I18N = {
     'settings.daytonaTimeout': 'DAYTONA_TIMEOUT',
     'settings.daytonaTimeoutHint': '(seconds)',
     'settings.daytonaImage': 'DAYTONA_IMAGE',
+    'settings.daytonaImageHint': '(optional — empty uses the Daytona default snapshot)',
+    'settings.daytonaImagePh': '(empty = Daytona default)',
     'settings.daytonaAutoStop': 'DAYTONA_AUTO_STOP_INTERVAL',
     'settings.daytonaAutoArchive': 'DAYTONA_AUTO_ARCHIVE_INTERVAL',
     'settings.daytonaAutoDelete': 'DAYTONA_AUTO_DELETE_INTERVAL',
     'settings.daytonaMinutes': '(min)',
     'settings.sandboxNote': 'When remote sandbox is active, only Bash is exposed and it runs inside a Daytona Linux container. PythonExec / JSExec / NodeExec / Pyodide tools are hidden — invoke python3, node, pip, etc. via Bash. The whole VFS is mirrored to /workspace before each call and pulled back after. One sandbox per conversation, auto-destroyed on new conversation or page unload.',
+    'settings.sandboxTest': 'Test sandbox',
+    'settings.sandboxTestRunning': 'Creating sandbox and running echo + uname …',
+    'settings.sandboxTestOk': 'Sandbox OK',
+    'settings.sandboxTestFail': 'Sandbox check failed',
     'settings.privacyNote': 'Settings (including S3 credentials and encryption passphrase) are stored locally in your browser (localStorage). Keys never leave your machine except when sent directly to the configured API endpoints or S3 bucket.',
     // Diagnostics
     'settings.diagnosticsHeader': 'Diagnostics',
@@ -2736,11 +2746,17 @@ const I18N = {
     'settings.daytonaTimeout': 'DAYTONA_TIMEOUT — 命令超时',
     'settings.daytonaTimeoutHint': '（秒）',
     'settings.daytonaImage': 'DAYTONA_IMAGE — 沙箱镜像（snapshot）',
+    'settings.daytonaImageHint': '（可选，留空使用 Daytona 默认镜像）',
+    'settings.daytonaImagePh': '（留空使用 Daytona 默认）',
     'settings.daytonaAutoStop': 'DAYTONA_AUTO_STOP_INTERVAL — 自动停止间隔',
     'settings.daytonaAutoArchive': 'DAYTONA_AUTO_ARCHIVE_INTERVAL — 自动归档间隔',
     'settings.daytonaAutoDelete': 'DAYTONA_AUTO_DELETE_INTERVAL — 自动删除间隔（归档后）',
     'settings.daytonaMinutes': '（分钟）',
     'settings.sandboxNote': '启用远程沙箱后，仅暴露 Bash，运行在 Daytona Linux 容器内；PythonExec / JSExec / NodeExec / Pyodide 工具会被隐藏 —— 通过 Bash 调用 python3 / node / pip 等。整个 VFS 在每次调用前镜像到 /workspace，调用后拉回。每个对话一个沙箱，新建对话或关闭页面时自动销毁。',
+    'settings.sandboxTest': '测试沙箱',
+    'settings.sandboxTestRunning': '正在创建沙箱并运行 echo + uname …',
+    'settings.sandboxTestOk': '沙箱可用',
+    'settings.sandboxTestFail': '沙箱检测失败',
     'settings.privacyNote': '设置（包括 S3 凭据与加密口令）仅保存在本地浏览器 localStorage。密钥只会发送到你配置的 API 端点或 S3 存储桶。',
     // Diagnostics
     'settings.diagnosticsHeader': '诊断',
@@ -3152,15 +3168,25 @@ const SANDBOX_DEFAULTS = Object.freeze({
   daytonaServerUrl: 'https://app.daytona.io/api',  // DAYTONA_SERVER_URL  (sandbox lifecycle)
   daytonaToolboxUrl: '',                           // optional explicit toolbox URL; auto-derived when blank
   daytonaTimeout: 180,                             // DAYTONA_TIMEOUT  (seconds)
-  daytonaImage: 'daytonaio/sandbox:0.6.0',         // DAYTONA_IMAGE  (sent as `snapshot` to REST)
+  daytonaImage: '',                                // DAYTONA_IMAGE  (sent as `snapshot` to REST; empty → Daytona uses its built-in default snapshot)
   daytonaAutoStopInterval: 5,                      // DAYTONA_AUTO_STOP_INTERVAL    (minutes)
   daytonaAutoArchiveInterval: 5,                   // DAYTONA_AUTO_ARCHIVE_INTERVAL (minutes)
   daytonaAutoDeleteInterval: 1440,                 // DAYTONA_AUTO_DELETE_INTERVAL  (minutes)
 });
+// One-shot migration: an earlier build hard-coded `daytonaio/sandbox:0.6.0`
+// as the default Daytona snapshot. That image is missing /usr/bin/zsh, which
+// Daytona's daemon hard-codes as the login shell, so every Bash call fails
+// with "fork/exec /usr/bin/zsh: no such file or directory". Rewrite that
+// exact legacy default to empty so Daytona falls back to its working built-in.
+const _LEGACY_BROKEN_DAYTONA_IMAGE = 'daytonaio/sandbox:0.6.0';
 function getSandboxConfig() {
   try {
     const raw = localStorage.getItem(SANDBOX_CFG_KEY);
-    if (raw) return Object.assign({}, SANDBOX_DEFAULTS, JSON.parse(raw));
+    if (raw) {
+      const cfg = Object.assign({}, SANDBOX_DEFAULTS, JSON.parse(raw));
+      if (cfg.daytonaImage === _LEGACY_BROKEN_DAYTONA_IMAGE) cfg.daytonaImage = '';
+      return cfg;
+    }
   } catch {}
   return { ...SANDBOX_DEFAULTS };
 }
@@ -6701,6 +6727,11 @@ async function toolJSExec(input) {
 // ═══════════════════════════════════════════════════════════════════
 // REMOTE TOOL WRAPPERS — route PythonExec/JSExec/Bash to Daytona
 // ═══════════════════════════════════════════════════════════════════
+const _DAYTONA_MISSING_SHELL_RE = /fork\/exec\s+\S+:\s+no such file or directory/i;
+function _daytonaShellHint(combined) {
+  if (!_DAYTONA_MISSING_SHELL_RE.test(combined)) return '';
+  return 'Daytona sandbox cannot spawn its login shell — the snapshot is missing the required binary (commonly /usr/bin/zsh). Fix: open Settings → Code Sandbox and clear DAYTONA_IMAGE so Daytona falls back to its working built-in snapshot, or pin an image that ships the required shell. Original error follows:\n';
+}
 async function _remoteWrap(input, exec) {
   if (!activeConvId) return 'Error: no active conversation to bind a remote sandbox to.';
   const convId = activeConvId;
@@ -6711,8 +6742,10 @@ async function _remoteWrap(input, exec) {
   catch (e) { return 'Error (sandbox exec): ' + (e.message || e); }
   try { await syncVfsFromRemote(convId, t0 - 1000); } catch (e) { console.warn('syncOut failed:', e?.message || e); }
   const { stdout = '', stderr = '', exitCode = 0 } = res || {};
-  if (exitCode && !stdout && !stderr) return `Exit ${exitCode}`;
+  const hint = _daytonaShellHint(stdout + '\n' + stderr);
+  if (exitCode && !stdout && !stderr) return hint ? hint + `Exit ${exitCode}` : `Exit ${exitCode}`;
   const parts = [];
+  if (hint) parts.push(hint);
   if (stdout) parts.push(stdout);
   if (stderr) parts.push((stdout ? '\n' : '') + 'stderr:\n' + stderr);
   if (exitCode) parts.push(`\n[exit ${exitCode}]`);
@@ -8523,6 +8556,51 @@ function onSandboxProviderChange() {
   const enabled = document.getElementById('setSandboxEnabled').checked;
   const platform = document.getElementById('setSandboxPlatform').value;
   document.getElementById('setSandboxDaytonaBox').style.display = (enabled && platform === 'daytona') ? '' : 'none';
+}
+async function testDaytonaSandbox() {
+  const btn = document.getElementById('setSandboxTestBtn');
+  const status = document.getElementById('setSandboxTestStatus');
+  if (!btn || !status) return;
+  const cfg = {
+    daytonaApiKey: document.getElementById('setDaytonaApiKey').value.trim(),
+    daytonaServerUrl: document.getElementById('setDaytonaServerUrl').value.trim() || SANDBOX_DEFAULTS.daytonaServerUrl,
+    daytonaToolboxUrl: '',
+    daytonaImage: document.getElementById('setDaytonaImage').value.trim(),
+  };
+  if (!cfg.daytonaApiKey) { status.textContent = 'DAYTONA_API_KEY is required.'; return; }
+  btn.disabled = true;
+  status.style.color = 'var(--text-dim)';
+  status.textContent = t('settings.sandboxTestRunning', 'Creating sandbox and running echo + uname …');
+  let sandboxId = '';
+  try {
+    const createBody = { language: 'python' };
+    if (cfg.daytonaImage) createBody.snapshot = cfg.daytonaImage;
+    const created = await _daytonaApiFetch(cfg, '/sandbox', { method: 'POST', body: JSON.stringify(createBody) });
+    sandboxId = created?.id || created?.sandboxId || created?.sandbox?.id || '';
+    if (!sandboxId) throw new Error('Daytona create response missing sandbox id.');
+    const exec = await _daytonaToolboxFetch(cfg, sandboxId, '/process/execute',
+      { method: 'POST', body: JSON.stringify({ command: 'echo ok && uname -a', cwd: '/workspace', timeout: 30 }) });
+    const norm = _normalizeExecResult(exec);
+    const combined = (norm.stdout || '') + '\n' + (norm.stderr || '');
+    const hint = _daytonaShellHint(combined);
+    if (hint || norm.exitCode !== 0) {
+      status.style.color = 'var(--accent-red, #ff6b6b)';
+      status.textContent = '❌ ' + t('settings.sandboxTestFail', 'Sandbox check failed') + ` (sandbox ${sandboxId}, exit ${norm.exitCode}):\n` + hint + combined.trim();
+    } else {
+      status.style.color = 'var(--accent-green, #51cf66)';
+      const firstLine = (norm.stdout || '').split('\n').filter(Boolean).slice(0, 3).join('\n');
+      status.textContent = '✅ ' + t('settings.sandboxTestOk', 'Sandbox OK') + ` (sandbox ${sandboxId}):\n` + firstLine;
+    }
+  } catch (e) {
+    status.style.color = 'var(--accent-red, #ff6b6b)';
+    status.textContent = '❌ ' + t('settings.sandboxTestFail', 'Sandbox check failed') + ': ' + (e?.message || e);
+  } finally {
+    if (sandboxId) {
+      try { await _daytonaApiFetch(cfg, '/sandbox/' + encodeURIComponent(sandboxId), { method: 'DELETE' }); }
+      catch (e) { console.warn('Daytona test sandbox cleanup failed:', e?.message || e); }
+    }
+    btn.disabled = false;
+  }
 }
 function closeSettingsModal() { document.getElementById('settingsModal').classList.remove('show'); }
 
