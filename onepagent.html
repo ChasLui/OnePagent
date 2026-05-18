@@ -3650,6 +3650,40 @@ async function _daytonaWaitForSandboxReady(cfg, sandboxId, timeoutMs = 90000) {
   throw new Error(`Daytona sandbox ${sandboxId} did not reach 'started' within ${Math.round(timeoutMs/1000)}s (last state: ${finalState}).`);
 }
 
+// After state=started the toolbox daemon needs a brief warmup before exec
+// returns a real response. Probe with `echo __dt_ready__` until the response
+// has a non-empty body OR an exitCode of 0; bail out on real shell errors
+// (matched by the existing fork/exec hint regex) so we don't loop forever.
+async function _daytonaWaitForToolboxReady(cfg, sandboxId, timeoutMs = 45000) {
+  const start = Date.now();
+  const intervalMs = 1500;
+  let lastRaw = null;
+  while (Date.now() - start < timeoutMs) {
+    let resp;
+    try {
+      resp = await _daytonaToolboxFetch(cfg, sandboxId, '/process/execute',
+        { method: 'POST', body: JSON.stringify({ command: 'echo __dt_ready__', cwd: '/', timeout: 10 }) });
+    } catch (e) {
+      // Toolbox 404 / 5xx during warmup — just keep trying.
+      lastRaw = { _fetchError: e?.message || String(e) };
+      await new Promise(r => setTimeout(r, intervalMs));
+      continue;
+    }
+    lastRaw = resp;
+    const norm = _normalizeExecResult(resp);
+    const combined = (norm.stdout || '') + (norm.stderr || '');
+    // Real shell error (e.g. missing zsh) — surface immediately, don't keep polling.
+    if (_daytonaShellHint(combined)) return resp;
+    // Got an actual answer.
+    if (norm.exitCode === 0 || combined.trim()) return resp;
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  console.warn('Daytona toolbox warmup timed out; last response:', lastRaw);
+  // Don't throw — let the caller's first real exec attempt run and surface
+  // whatever Daytona returns. The improved _remoteWrap diagnostics below
+  // will dump the raw response so the failure isn't a black box.
+}
+
 const daytonaClient = {
   async ensureSandbox(convId) {
     const cfg = getSandboxConfig();
@@ -3671,6 +3705,11 @@ const daytonaClient = {
       if (String(r?.state || '').toLowerCase() !== 'started') {
         await _daytonaWaitForSandboxReady(cfg, sandboxId);
       }
+      // Even after state=started, the toolbox daemon needs a few more seconds
+      // before /process/execute returns a usable response — calls land but
+      // come back with { exitCode: -1, result: '' }. Probe with a no-op until
+      // we see a real response, otherwise the first real tool call still races.
+      await _daytonaWaitForToolboxReady(cfg, sandboxId);
       window._daytonaSessions[convId] = { sandboxId, createdAt: Date.now(), lastUsed: Date.now(), image: cfg.daytonaImage || '' };
       return sandboxId;
     })().finally(() => { delete _daytonaPending[convId]; });
@@ -3762,12 +3801,12 @@ const daytonaClient = {
 };
 
 function _normalizeExecResult(r) {
-  if (!r || typeof r !== 'object') return { stdout: String(r ?? ''), stderr: '', exitCode: 0 };
+  if (!r || typeof r !== 'object') return { stdout: String(r ?? ''), stderr: '', exitCode: 0, _raw: r };
   // Daytona REST uses { result, exitCode }; some toolbox responses use stdout/stderr.
   const stdout = r.stdout ?? r.result ?? r.output ?? '';
   const stderr = r.stderr ?? r.error ?? '';
   const exitCode = (r.exitCode ?? r.exit_code ?? r.code ?? 0) | 0;
-  return { stdout: String(stdout || ''), stderr: String(stderr || ''), exitCode };
+  return { stdout: String(stdout || ''), stderr: String(stderr || ''), exitCode, _raw: r };
 }
 
 function _u8ToBase64(u8) {
@@ -6774,9 +6813,13 @@ async function _remoteWrap(input, exec) {
   try { res = await exec(convId); }
   catch (e) { return 'Error (sandbox exec): ' + (e.message || e); }
   try { await syncVfsFromRemote(convId, t0 - 1000); } catch (e) { console.warn('syncOut failed:', e?.message || e); }
-  const { stdout = '', stderr = '', exitCode = 0 } = res || {};
+  const { stdout = '', stderr = '', exitCode = 0, _raw = null } = res || {};
   const hint = _daytonaShellHint(stdout + '\n' + stderr);
-  if (exitCode && !stdout && !stderr) return hint ? hint + `Exit ${exitCode}` : `Exit ${exitCode}`;
+  if (exitCode && !stdout && !stderr) {
+    let rawDump = '';
+    try { rawDump = '\nraw response: ' + JSON.stringify(_raw).slice(0, 400); } catch {}
+    return (hint || '') + `Exit ${exitCode} (no stdout/stderr from Daytona — sandbox may still be warming up or the toolbox returned a bare error envelope).` + rawDump;
+  }
   const parts = [];
   if (hint) parts.push(hint);
   if (stdout) parts.push(stdout);
