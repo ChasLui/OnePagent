@@ -29,6 +29,8 @@ jobs:
           cp onepagent.html _site/index.html
           cp onepagent.html _site/onepagent.html
           cp logo.svg _site/logo.svg
+          cp manifest.webmanifest _site/manifest.webmanifest
+          cp sw.js _site/sw.js
           cp README.md _site/README.md
           cp README.zh.md _site/README.zh.md
           echo "onepagent.top" > _site/CNAME

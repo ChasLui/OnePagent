@@ -820,6 +820,7 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .send-btn:hover { filter: brightness(1.1); transform: scale(1.05); }
 .send-btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 .send-btn.stop { background: var(--accent-pink); }
+.send-btn.guide { background: var(--accent-cyan); }
 .media-mode-select, .media-model-select { height: 40px; max-width: 150px; background: var(--bg-root); border: 1px solid var(--border); border-radius: 8px; color: var(--text-secondary); font: 11px 'JetBrains Mono', monospace; padding: 0 8px; outline: none; flex-shrink: 0; }
 .media-model-select { max-width: 180px; display: none; color: var(--accent-cyan); }
 .media-mode-select.active { border-color: var(--accent-cyan); color: var(--accent-cyan); }
@@ -2257,6 +2258,7 @@ const I18N = {
     'skills.create': 'Create',
     // Input
     'input.placeholder': 'Type message...',
+    'input.placeholderRunning': 'Type to guide the agent — won’t interrupt the loop',
     'input.attach': 'Attach files',
     'media.mode.chat': 'Chat',
     'media.mode.textImage': 'Text→Image',
@@ -2714,6 +2716,7 @@ const I18N = {
     'skills.create': '创建',
     // Input
     'input.placeholder': '输入消息…',
+    'input.placeholderRunning': '输入内容引导 Agent — 不会中断当前回合',
     'input.attach': '附加文件',
     'media.mode.chat': '聊天',
     'media.mode.textImage': '文生图',
@@ -16345,6 +16348,15 @@ async function _runAgentLoop(userText, options = {}) {
   try {
     while (true) {
       if (run) activateConversationRun(run);
+      if (run?.pendingGuidance?.length) {
+        const queued = run.pendingGuidance.splice(0);
+        for (const g of queued) {
+          const entry = appendSessionEntry('message', { role: 'user', content: g.text, guidance: true });
+          appendUserBubble(g.text, g.fileList || [], [], findConversationIndexByEntryId(entry.id), entry.id);
+        }
+        rebuildConversation();
+        snapshotConversationRunState(run);
+      }
       loopCount++; updateMemoryUI();
       await checkAndCompact();
       if (run) activateConversationRun(run);
@@ -16636,6 +16648,7 @@ async function _runAgentLoop(userText, options = {}) {
         scrollBottom();
         continue;
       }
+      if (run?.pendingGuidance?.length) continue;
       break;
     }
   } catch (e) {
@@ -17159,7 +17172,25 @@ function msgAction(btn, role) {
     updateMemoryUI();
     const fileList = Array.from(userBubble?.querySelectorAll('[title]') || []).map(el => el.getAttribute('title')).filter(v => v && v.startsWith('/'));
     saveCurrentConv(true);
-    _runAgentLoop(userText, { promptIndex, promptEntryId, tokenBase: totalTokens, loopBase: loopCount, fileList });
+    const convId = visibleConvId || activeConvId;
+    const run = {
+      convId, active: true, kind: 'chat',
+      abortCtrl: new AbortController(),
+      startedAt: Date.now(),
+      statusType: 'running',
+      statusText: t('status.thinking'),
+      state: captureConversationState(chatEl.innerHTML),
+      chatContainer: null,
+      chatHTML: chatEl.innerHTML,
+      cancelled: false,
+      deleted: false,
+      pendingGuidance: []
+    };
+    conversationRuns.set(convId, run);
+    activateConversationRun(run);
+    updateButtons();
+    renderConvList();
+    _runAgentLoop(userText, { promptIndex, promptEntryId, tokenBase: totalTokens, loopBase: loopCount, fileList, run, convId });
   } else if (role === 'like') {
     btn.classList.toggle('ok');
     msgEl?.querySelector('[data-role="dislike"]')?.classList.remove('bad');
@@ -17353,6 +17384,7 @@ function atNavigate(dir) {
 
 function handleInputChange(el) {
   autoResize(el);
+  updateButtons();
   const val = el.value;
   const pos = el.selectionStart;
   const before = val.slice(0, pos);
@@ -17780,7 +17812,21 @@ async function handleSend() {
   const inp = document.getElementById('userInput');
   const text = inp.value.trim();
   const convId = visibleConvId || activeConvId;
-  if ((!text && !attachedFiles.length) || isConversationRunning(convId)) return;
+  if (!text && !attachedFiles.length) return;
+  if (isConversationRunning(convId)) {
+    const run = conversationRuns.get(convId);
+    if (!run) return;
+    run.pendingGuidance = run.pendingGuidance || [];
+    const guidedFiles = [...attachedFiles];
+    run.pendingGuidance.push({ text, fileList: guidedFiles });
+    inp.value = '';
+    attachedFiles = [];
+    autoResize(inp);
+    hideAtDropdown();
+    renderChips();
+    updateButtons();
+    return;
+  }
   inp.value = '';
   autoResize(inp);
   hideAtDropdown();
@@ -17800,10 +17846,30 @@ function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(e
 function updateButtons() {
   syncLegacyRunFlags();
   const btn = document.getElementById('sendBtn');
+  const inp = document.getElementById('userInput');
   const run = getActiveConversationRun();
-  if (run?.active) { btn.innerHTML = '\u25A0'; btn.classList.add('stop'); btn.onclick = () => { if (run.state?.ralphRun?.active) run.state.ralphRun.cancelled = true; stopConversationRun(run.convId); }; }
-  else { btn.innerHTML = '\u25B6'; btn.classList.remove('stop'); btn.onclick = handleSend; }
-  document.getElementById('userInput').disabled = !!run?.active;
+  const running = !!run?.active;
+  const hasText = !!(inp && (inp.value.trim().length > 0 || attachedFiles.length > 0));
+  if (inp) {
+    inp.disabled = false;
+    inp.placeholder = running ? (t('input.placeholderRunning') || 'Type to guide the agent') : (t('input.placeholder') || 'Type message...');
+  }
+  if (running && hasText) {
+    btn.innerHTML = '\u21AA';
+    btn.classList.remove('stop'); btn.classList.add('guide');
+    btn.title = 'Send to guide the agent (won\u2019t interrupt)';
+    btn.onclick = handleSend;
+  } else if (running) {
+    btn.innerHTML = '\u25A0';
+    btn.classList.add('stop'); btn.classList.remove('guide');
+    btn.title = 'Stop';
+    btn.onclick = () => { if (run.state?.ralphRun?.active) run.state.ralphRun.cancelled = true; stopConversationRun(run.convId); };
+  } else {
+    btn.innerHTML = '\u25B6';
+    btn.classList.remove('stop'); btn.classList.remove('guide');
+    btn.title = 'Send';
+    btn.onclick = handleSend;
+  }
 }
 function setStatus(type, text) {
   if (currentRunContext && !isRunVisible(currentRunContext)) {
