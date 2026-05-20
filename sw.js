@@ -6,7 +6,7 @@
  *   - Anything else (POST, auth, model APIs): pass through untouched.
  * Bump CACHE_VERSION whenever the app shell changes to evict old caches.
  */
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `onepagent-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -15,6 +15,12 @@ const APP_SHELL = [
   './onepagent.html',
   './logo.svg',
   './manifest.webmanifest',
+  './icons/favicon.ico',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/icon-192-maskable.png',
+  './icons/icon-512-maskable.png',
+  './icons/icon-180.png',
 ];
 
 const CDN_PREFETCH = [

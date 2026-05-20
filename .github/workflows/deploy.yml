@@ -31,6 +31,8 @@ jobs:
           cp logo.svg _site/logo.svg
           cp manifest.webmanifest _site/manifest.webmanifest
           cp sw.js _site/sw.js
+          mkdir -p _site/icons
+          cp icons/*.png icons/*.ico _site/icons/
           cp README.md _site/README.md
           cp README.zh.md _site/README.zh.md
           echo "onepagent.top" > _site/CNAME
