@@ -637,8 +637,11 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .chat-messages { flex: 1; overflow-y: auto; padding: clamp(8px, 1.2vw, 14px); display: flex; flex-direction: column; gap: clamp(6px, 0.8vw, 10px); }
 .msg { max-width: 90%; animation: fadeIn 0.25s; }
 @keyframes fadeIn { from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)} }
-.msg-user { align-self: flex-end; }
+.msg-user { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; }
 .msg-user .msg-body { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px 10px 2px 10px; padding: 10px 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.msg-user-main { position: relative; width: fit-content; max-width: 100%; padding-bottom: 18px; }
+.msg-user .msg-actions { left: auto; right: 0; }
+.msg-user-main:hover > .msg-actions { opacity: 1; pointer-events: auto; }
 .msg-assistant { align-self: flex-start; max-width: 95%; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .msg-assistant-main { position: relative; width: fit-content; max-width: min(820px, 100%); padding-bottom: 18px; }
 .msg-assistant .msg-body { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 2px 10px 10px 10px; padding: 10px 14px; font-size: 13px; line-height: 1.7; width: fit-content; min-width: min(320px, 100%); max-width: min(820px, 100%); }
@@ -16692,6 +16695,9 @@ function appendUserBubble(t, fileList, usedSkills, promptIndex = null, promptEnt
   const d = document.createElement('div'); d.className = 'msg msg-user';
   if (Number.isInteger(promptIndex)) d.dataset.promptIndex = String(promptIndex);
   if (promptEntryId) d.dataset.promptEntryId = promptEntryId;
+  d.dataset.userText = t || '';
+  if (Number.isFinite(totalTokens)) d.dataset.tokenBase = String(totalTokens);
+  if (Number.isFinite(loopCount)) d.dataset.loopBase = String(loopCount);
   let chips = '';
   const tags = [];
   if (usedSkills && usedSkills.length) {
@@ -16706,7 +16712,12 @@ function appendUserBubble(t, fileList, usedSkills, promptIndex = null, promptEnt
     }
   }
   if (tags.length) chips = '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px">' + tags.join('') + '</div>';
-  d.innerHTML = `<div class="msg-body">${chips}${esc(t)}</div>`;
+  const actions =
+    `<div class="msg-actions">` +
+      `<button class="msg-action-btn" data-role="copy"  onclick="msgAction(this,'copy')"  title="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` +
+      `<button class="msg-action-btn" data-role="regen" onclick="msgAction(this,'regen')" title="Regenerate"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>` +
+    `</div>`;
+  d.innerHTML = `<div class="msg-user-main"><div class="msg-body">${chips}${esc(t)}</div>${actions}</div>`;
   getContextChatEl().appendChild(d); scrollBottom();
 }
 function appendAssistantBubble() {
@@ -17061,12 +17072,19 @@ function _renderHtmlFrame(el, html) {
 
 // ── Message actions ────────────────────────────────────────────────
 function msgAction(btn, role) {
-  const msgEl = btn.closest('.msg-assistant');
-  const textEl = msgEl?.querySelector('[data-role="assistant-text"]');
+  const userMsgEl = btn.closest('.msg-user');
+  const msgEl = userMsgEl || btn.closest('.msg-assistant');
+  const isUser = !!userMsgEl;
+  const textEl = isUser ? msgEl?.querySelector('.msg-body') : msgEl?.querySelector('[data-role="assistant-text"]');
   if (role === 'copy') {
-    const reasoningRaw = msgEl?.querySelector('[data-role="assistant-reasoning"] .reasoning-body')?.dataset.raw || msgEl?.querySelector('[data-role="assistant-reasoning"] .reasoning-body')?.innerText || '';
-    const textRaw = textEl?.dataset.raw || textEl?.innerText || '';
-    const raw = reasoningRaw ? `[Thinking]\n${reasoningRaw}\n\n[Answer]\n${textRaw}` : textRaw;
+    let raw;
+    if (isUser) {
+      raw = msgEl?.dataset.userText || textEl?.innerText || '';
+    } else {
+      const reasoningRaw = msgEl?.querySelector('[data-role="assistant-reasoning"] .reasoning-body')?.dataset.raw || msgEl?.querySelector('[data-role="assistant-reasoning"] .reasoning-body')?.innerText || '';
+      const textRaw = textEl?.dataset.raw || textEl?.innerText || '';
+      raw = reasoningRaw ? `[Thinking]\n${reasoningRaw}\n\n[Answer]\n${textRaw}` : textRaw;
+    }
     navigator.clipboard.writeText(raw).then(() => {
       const prev = btn.innerHTML; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'; btn.classList.add('ok');
       setTimeout(() => { btn.innerHTML = prev; btn.classList.remove('ok'); }, 1500);
@@ -17121,10 +17139,15 @@ function msgAction(btn, role) {
     lastTurnTokens = 0;
     contextBreakdownExpanded = false;
     loopCount = Number.isFinite(loopBase) && loopBase >= 0 ? loopBase : Math.max(0, loopCount - 1);
-    let userBubble = msgEl.previousElementSibling;
-    while (userBubble && !userBubble.classList.contains('msg-user')) userBubble = userBubble.previousElementSibling;
-    if (!userBubble) {
-      userBubble = Array.from(chatEl.querySelectorAll('.msg-user')).find(el => el.dataset.promptEntryId === promptEntryId) || null;
+    let userBubble;
+    if (isUser) {
+      userBubble = msgEl;
+    } else {
+      userBubble = msgEl.previousElementSibling;
+      while (userBubble && !userBubble.classList.contains('msg-user')) userBubble = userBubble.previousElementSibling;
+      if (!userBubble) {
+        userBubble = Array.from(chatEl.querySelectorAll('.msg-user')).find(el => el.dataset.promptEntryId === promptEntryId) || null;
+      }
     }
     const startNode = userBubble ? userBubble.nextSibling : msgEl;
     let node = startNode;
