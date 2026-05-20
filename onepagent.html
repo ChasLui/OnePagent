@@ -4,6 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>OnePagent &middot; Single-Page AI Agent</title>
+<meta name="description" content="Single-page, browser-native AI agent.">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f6fa" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="dark light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="OnePagent">
+<link rel="apple-touch-icon" href="logo.svg">
 <link rel="icon" type="image/svg+xml" href="logo.svg">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><defs><linearGradient id='a' x1='4' y1='3' x2='19' y2='21' gradientUnits='userSpaceOnUse'><stop stop-color='%23ff6b35' stop-opacity='0.18'/><stop offset='1' stop-color='%23ff3399' stop-opacity='0.06'/></linearGradient><linearGradient id='b' x1='4' y1='3' x2='19' y2='21' gradientUnits='userSpaceOnUse'><stop stop-color='%23ff8040'/><stop offset='1' stop-color='%23ff3399'/></linearGradient><linearGradient id='c' x1='7' y1='10' x2='16' y2='17' gradientUnits='userSpaceOnUse'><stop stop-color='%23ff8040' stop-opacity='0.9'/><stop offset='1' stop-color='%23aa66ff' stop-opacity='0.9'/></linearGradient><radialGradient id='d' cx='40%25' cy='35%25'><stop stop-color='%23ffb070'/><stop offset='1' stop-color='%23cc1f77'/></radialGradient></defs><path d='M5 3H15L19 7V20A1 1 0 0 1 18 21H5A1 1 0 0 1 4 20V4A1 1 0 0 1 5 3Z' fill='url(%23a)' stroke='url(%23b)' stroke-width='1.1' stroke-linejoin='round'/><path d='M15 3V7H19' stroke='url(%23b)' stroke-width='1.1' fill='none' stroke-linejoin='round'/><circle cx='11.5' cy='13' r='2.6' fill='url(%23d)'/><circle cx='7' cy='10' r='0.9' fill='%23ff6b35'/><circle cx='16' cy='11' r='0.9' fill='%2300d4ff'/><circle cx='8' cy='17' r='0.9' fill='%23aa66ff'/><circle cx='15' cy='17' r='0.9' fill='%2300ff88'/><path d='M7 10L11.5 13L16 11M8 17L11.5 13L15 17' stroke='url(%23c)' stroke-width='0.9' stroke-linecap='round' fill='none' opacity='0.85'/></svg>">
 <script crossorigin="anonymous" src="https://cdn.bootcdn.net/ajax/libs/marked/11.1.1/marked.min.js"></script>
@@ -1136,6 +1146,13 @@ document.addEventListener('DOMContentLoaded', function() {
   updateThemeLabel(cur);
 });
 </script>
+<script>
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('sw.js').catch(function() {});
+  });
+}
+</script>
 </head>
 <body>
 <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
@@ -1744,6 +1761,11 @@ document.addEventListener('DOMContentLoaded', function() {
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
       <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px" data-i18n="settings.diagnosticsHeader">Diagnostics</label>
       <button type="button" class="modal-btn secondary" onclick="runFsDiagnostics()" style="width:100%;padding:8px 10px;font-size:11px;margin-bottom:6px" data-i18n="settings.runFsDiag">Run file system diagnostics</button>
+
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
+      <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><svg class="ui-icon" aria-hidden="true"><use href="#i-message-circle"></use></svg> <span data-i18n="settings.notificationsHeader">Notifications</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.notificationsHeaderHint">(browser permission required)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-secondary);margin-bottom:6px"><input type="checkbox" id="setTaskNotifications" style="width:auto;margin:0"> <span data-i18n="settings.taskNotificationsEnable">Notify when a conversation task finishes</span></label>
+      <div style="font-size:10px;color:var(--text-dim);line-height:1.5;margin-bottom:6px" data-i18n="settings.taskNotificationsDesc">Uses browser notifications for completed or failed chat and media runs. Click a notification to reopen that conversation.</div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
       <label style="font-weight:600;color:var(--text-primary);text-transform:none;letter-spacing:0;font-size:12px"><span data-i18n="settings.ralphHeader">Ralph Loop</span> <span style="text-transform:none;color:var(--text-dim);font-weight:400" data-i18n="settings.ralphHeaderHint">(unattended continue-until-done mode)</span></label>
@@ -2364,6 +2386,13 @@ const I18N = {
     // Diagnostics
     'settings.diagnosticsHeader': 'Diagnostics',
     'settings.runFsDiag': 'Run file system diagnostics',
+    // Notifications
+    'settings.notificationsHeader': 'Notifications',
+    'settings.notificationsHeaderHint': '(browser permission required)',
+    'settings.taskNotificationsEnable': 'Notify when a conversation task finishes',
+    'settings.taskNotificationsDesc': 'Uses browser notifications for completed or failed chat and media runs. Click a notification to reopen that conversation.',
+    'settings.taskNotificationsBlocked': 'Task notifications are enabled, but browser notification permission is blocked.',
+    'settings.taskNotificationsUnsupported': 'Task notifications are enabled, but this browser context does not support notifications.',
     // Ralph Loop
     'settings.ralphHeader': 'Ralph Loop',
     'settings.ralphHeaderHint': '(unattended continue-until-done mode)',
@@ -2429,6 +2458,12 @@ const I18N = {
     'settings.cronEnable': 'Enable scheduled tasks',
     'settings.cronWarning': 'Triggered tasks consume LLM tokens automatically. Tasks run only while this browser tab is open; closed tabs miss fires.',
     'settings.cronAddTask': 'Add task',
+    'notify.taskFinishedTitle': 'OnePagent task finished',
+    'notify.taskFailedTitle': 'OnePagent task failed',
+    'notify.bodyChatDone': 'Conversation finished: {title}',
+    'notify.bodyMediaDone': 'Media generation finished: {title}',
+    'notify.bodyError': 'Task stopped with an error: {title}',
+    'notify.untitledConversation': 'Untitled conversation',
     'settings.cronDesc': '5-field local-time cron: minute hour day-of-month month day-of-week. Each fire opens a fresh conversation. Ralph Loop has priority — fires that overlap a Ralph run are skipped and rolled forward.',
     'cron.next': 'next',
     'cron.fired': 'fired',
@@ -2554,6 +2589,18 @@ const I18N = {
     'label.content': 'Content',
   },
   zh: {
+    'settings.notificationsHeader': '通知',
+    'settings.notificationsHeaderHint': '（需要浏览器权限）',
+    'settings.taskNotificationsEnable': '对话任务完成时通知我',
+    'settings.taskNotificationsDesc': '使用浏览器通知提示已完成或失败的聊天与媒体任务。点击通知会回到对应对话。',
+    'settings.taskNotificationsBlocked': '任务通知已启用，但浏览器通知权限被阻止。',
+    'settings.taskNotificationsUnsupported': '任务通知已启用，但当前浏览器环境不支持通知。',
+    'notify.taskFinishedTitle': 'OnePagent 任务已完成',
+    'notify.taskFailedTitle': 'OnePagent 任务失败',
+    'notify.bodyChatDone': '对话已完成：{title}',
+    'notify.bodyMediaDone': '媒体生成已完成：{title}',
+    'notify.bodyError': '任务出错：{title}',
+    'notify.untitledConversation': '未命名对话',
     // Top bar
     'status.ready': '就绪',
     'status.thinking': '思考中…',
@@ -3188,6 +3235,51 @@ function getRalphSettings() {
     maxIterations: unlimited ? Infinity : (Number.isFinite(maxRaw) ? Math.min(RALPH_DEFAULTS.hardMaxIterations, Math.max(1, maxRaw)) : RALPH_DEFAULTS.maxIterations),
     completionMarker: marker
   };
+}
+const TASK_NOTIFICATION_DEFAULTS = { enabled: false };
+function getTaskNotificationSettings() {
+  const raw = loadSettings()?.taskNotifications || {};
+  return { ...TASK_NOTIFICATION_DEFAULTS, enabled: raw.enabled === true };
+}
+function taskNotificationsSupported() {
+  return typeof window !== 'undefined' && 'Notification' in window;
+}
+async function requestTaskNotificationPermissionIfNeeded() {
+  if (!taskNotificationsSupported()) return 'unsupported';
+  if (Notification.permission === 'default') {
+    try { return await Notification.requestPermission(); }
+    catch { return Notification.permission || 'denied'; }
+  }
+  return Notification.permission;
+}
+function getConversationTitleForNotification(convId) {
+  const meta = convHistory.find(c => c.id === convId);
+  const title = String(meta?.title || '').trim();
+  return title && title !== 'New Chat' ? title : t('notify.untitledConversation', 'Untitled conversation');
+}
+function notifyTaskFinished({ convId, kind = 'chat', outcome = 'done' } = {}) {
+  if (!getTaskNotificationSettings().enabled) return;
+  if (!taskNotificationsSupported() || Notification.permission !== 'granted') return;
+  const title = outcome === 'error'
+    ? t('notify.taskFailedTitle', 'OnePagent task failed')
+    : t('notify.taskFinishedTitle', 'OnePagent task finished');
+  const convTitle = getConversationTitleForNotification(convId);
+  const bodyKey = outcome === 'error'
+    ? 'notify.bodyError'
+    : (kind === 'media' ? 'notify.bodyMediaDone' : 'notify.bodyChatDone');
+  const bodyFallback = outcome === 'error' ? 'Task stopped with an error: {title}' : (kind === 'media' ? 'Media generation finished: {title}' : 'Conversation finished: {title}');
+  const body = _convTemplate(bodyKey, bodyFallback, { title: convTitle });
+  try {
+    const notification = new Notification(title, { body, tag: convId ? `onepagent-run-${convId}` : 'onepagent-run', renotify: true });
+    notification.onclick = () => {
+      try {
+        window.focus();
+        if (convId) switchConversation(convId);
+      } catch {}
+      try { notification.close(); } catch {}
+    };
+    setTimeout(() => { try { notification.close(); } catch {} }, 12000);
+  } catch {}
 }
 // Provider profiles (user-defined). Each provider is either anthropic-compatible or openai-compatible.
 const PROVIDERS_KEY = 'ba_providers_v1';
@@ -9034,6 +9126,7 @@ function openSettingsModal() {
   document.getElementById('setRalphMaxIterations').value = String(Number.isFinite(ralph.maxIterations) ? ralph.maxIterations : RALPH_DEFAULTS.maxIterations);
   document.getElementById('setRalphMaxIterations').disabled = !!ralph.unlimited;
   document.getElementById('setRalphCompletionMarker').value = ralph.completionMarker;
+  document.getElementById('setTaskNotifications').checked = !!getTaskNotificationSettings().enabled;
   // Swarm settings
   document.getElementById('setSwarmEnabled').checked = !!swarmSettings.enabled;
   document.getElementById('setSwarmConcurrency').value = String(swarmSettings.maxConcurrency || SWARM_DEFAULTS.maxConcurrency);
@@ -9502,12 +9595,15 @@ async function saveSettings() {
   const ralphUnlimited = document.getElementById('setRalphUnlimited').checked;
   const ralphMaxIterations = Number.isFinite(ralphMaxRaw) ? Math.min(RALPH_DEFAULTS.hardMaxIterations, Math.max(1, ralphMaxRaw)) : RALPH_DEFAULTS.maxIterations;
   const ralphCompletionMarker = document.getElementById('setRalphCompletionMarker').value.trim() || RALPH_DEFAULTS.completionMarker;
+  const taskNotificationsEnabled = document.getElementById('setTaskNotifications').checked;
+  const taskNotificationPermission = taskNotificationsEnabled ? await requestTaskNotificationPermissionIfNeeded() : '';
   const prevSettings = loadSettings() || {};
   const prevMem = prevSettings.memory || {};
   const settings = {
     ...prevSettings,
     tavily_api_key: tavilyKey,
     ralph: { enabled: document.getElementById('setRalphEnabled').checked, unlimited: ralphUnlimited, maxIterations: ralphMaxIterations, completionMarker: ralphCompletionMarker },
+    taskNotifications: { enabled: taskNotificationsEnabled },
     memory: { enabled: memEnabled, autoExtract: memAutoExtract, maxRecall: memMaxRecall, extractionModel: prevMem.extractionModel || '' }
   };
   saveSettingsToStorage(settings);
@@ -9618,6 +9714,8 @@ async function saveSettings() {
   rebuildToolDefs();
   closeSettingsModal();
   appendSystemMsg('Settings saved.');
+  if (taskNotificationsEnabled && taskNotificationPermission === 'denied') appendSystemMsg(t('settings.taskNotificationsBlocked', 'Task notifications are enabled, but browser notification permission is blocked.'));
+  else if (taskNotificationsEnabled && taskNotificationPermission === 'unsupported') appendSystemMsg(t('settings.taskNotificationsUnsupported', 'Task notifications are enabled, but this browser context does not support notifications.'));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -16288,8 +16386,9 @@ async function _runAgentLoop(userText, options = {}) {
           if (PROVIDER !== 'anthropic_compat') retryBody.stream_options = { ...(retryBody.stream_options || {}), include_usage: true };
           resp = await sendLLMRequestBody(retryBody, (run?.abortCtrl || abortCtrl).signal);
           if (run) activateConversationRun(run);
-          if (!resp.ok) { msgEl.remove(); appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); break; }
+          if (!resp.ok) { stoppedBy = 'error'; msgEl.remove(); appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); break; }
         } else {
+          stoppedBy = 'error';
           msgEl.remove();
           appendErrorBubble(`API Error (${resp.status}): ${errorText.slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase });
           break;
@@ -16514,6 +16613,7 @@ async function _runAgentLoop(userText, options = {}) {
           .catch(e => console.warn('memExtractAfterTurn failed', e));
       }
       if (result.stream_error) {
+        stoppedBy = 'error';
         if (ralphRun?.active) ralphRun.stopReason = 'stream error';
         break;
       }
@@ -16538,7 +16638,7 @@ async function _runAgentLoop(userText, options = {}) {
   } catch (e) {
     if (run) activateConversationRun(run);
     if (e.name === 'AbortError') stoppedBy = 'abort';
-    else appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase });
+    else { stoppedBy = 'error'; appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); }
   }
   finally {
     if (run) activateConversationRun(run);
@@ -16553,6 +16653,7 @@ async function _runAgentLoop(userText, options = {}) {
       run.statusText = stoppedBy === 'abort' ? 'Stopped' : t('status.ready');
       snapshotConversationRunState(run);
       if (!run.deleted) await saveConversationState(run.convId, run.state, { andRenderList: true });
+      if (!run.deleted && stoppedBy !== 'abort') notifyTaskFinished({ convId: run.convId, kind: 'chat', outcome: stoppedBy === 'error' ? 'error' : 'done' });
       conversationRuns.delete(run.convId);
       if (visibleConvId === run.convId) {
         applyConversationState(run.state);
@@ -17577,12 +17678,14 @@ async function mediaGenerationLoop(text, filePaths, usedSkills) {
   if (conversation.filter(m => m.role === 'user').length === 1 && convId && titleText) {
     scheduleConversationTitleGeneration(convId, titleText);
   }
+  let mediaOutcome = 'done';
   try {
     const result = await runMediaGeneration(mode, text, filePaths);
     activateConversationRun(run);
     await appendMediaGenerationBubble(result);
   } catch (e) {
     activateConversationRun(run);
+    mediaOutcome = e.name === 'AbortError' ? 'abort' : 'error';
     appendErrorBubble(`Error: ${e.message}`, { userText: text, promptEntryId: userEntry.id });
   }
   activateConversationRun(run);
@@ -17591,6 +17694,7 @@ async function mediaGenerationLoop(text, filePaths, usedSkills) {
   run.finishedAt = Date.now();
   snapshotConversationRunState(run);
   if (!run.deleted) await saveConversationState(convId, run.state, { andRenderList: true });
+  if (!run.deleted && mediaOutcome !== 'abort') notifyTaskFinished({ convId, kind: 'media', outcome: mediaOutcome });
   conversationRuns.delete(convId);
   if (visibleConvId === convId) {
     applyConversationState(run.state);

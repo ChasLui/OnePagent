@@ -1,0 +1,30 @@
+{
+  "name": "OnePagent · Single-Page AI Agent",
+  "short_name": "OnePagent",
+  "description": "Single-page, browser-native AI agent.",
+  "id": "/onepagent.html",
+  "start_url": "./onepagent.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "orientation": "any",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["productivity", "developer", "utilities"],
+  "icons": [
+    {
+      "src": "logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
