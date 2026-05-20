@@ -10717,6 +10717,7 @@ function appendRalphContinuationMessage({ ralphRun, lastAssistantText }) {
   const text = buildRalphContinuationText({ ralphRun, lastAssistantText });
   appendSessionEntry('message', { role: 'user', content: [{ type: 'text', text }], ralphSynthetic: true, promptEntryId: ralphRun.promptEntryId });
   rebuildConversation();
+  if (currentRunContext) snapshotConversationRunState(currentRunContext);
   appendSystemMsg(`Ralph Loop continuing: iteration ${ralphRun.iteration}/${ralphRun.unlimited ? '∞' : ralphRun.maxIterations}.`);
 }
 
@@ -13686,6 +13687,7 @@ async function toolReadRemote(input) {
     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
     return _formatReadText(text, input);
   } catch (e) {
+    if (run) activateConversationRun(run);
     const local = _readVfsForTool(input, paths.vfsPath);
     if (local.ok) {
       try { await _copyVfsFileToRemote(convId, paths); } catch {}
@@ -13730,6 +13732,7 @@ async function toolEditRemote(input) {
     if (!_looksLikeText(bytes)) return `Error: cannot edit binary file in sandbox: ${paths.remotePath}`;
     content = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   } catch (e) {
+    if (run) activateConversationRun(run);
     const local = vfsRead(paths.vfsPath);
     if (local.error) return `Error: file not found in sandbox or VFS: ${paths.raw || input?.file_path || ''}\nSandbox path: ${paths.remotePath}\nSandbox error: ${e?.message || e}`;
     content = local.content || '';
@@ -15443,6 +15446,7 @@ function normalizeProjectedMessages(messages, provider = PROVIDER, options = {})
   return normalized;
 }
 async function collectRequestContextParts(messages = buildConversationFromEntries(), headId = activeEntryId, options = {}) {
+  const run = options.run || currentRunContext || null;
   const projectedMessagesBase = normalizeProjectedMessages(messages, PROVIDER, { microCompact: options.microCompact || {} });
   const contextEditor = document.getElementById('contextEditor')?.value || '';
   const activeSkillMetadata = getActiveSkillMetadataPrompts();
@@ -15456,6 +15460,7 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   const ralphPrompt = getRalphLoopPrompt();
   const sandboxPrompt = isRemoteSandbox() ? '\n\n[REMOTE SANDBOX]\nA real Linux container (Daytona) is attached. Your execution surface in this mode:\n- **Bash** is the ONLY code-execution tool. Run interpreters from the shell: `python3 script.py`, `python3 -c "..."`, `node script.js`, `pip install ...`, `npm install ...`. Pip/npm installs and /home/daytona changes persist across Bash calls within this conversation.\n- **Read / Write / Edit** target the Daytona filesystem first. You may pass either VFS-style `/foo/bar.py` or sandbox absolute `/home/daytona/foo/bar.py`; both refer to `/home/daytona/foo/bar.py`. Do not build paths like `/home/daytona/home/daytona/...`. Successful reads/writes/edits update the browser VFS shadow at `/foo/bar.py`.\n- **Glob / Grep** search the browser VFS shadow. Use Bash for live sandbox `find`/`grep` when you need the current container filesystem.\n- Before every Bash call, the VFS shadow is uploaded to /home/daytona so files are available in the sandbox. After Bash returns, only files under /home/daytona/outputs are pulled back into the VFS as /outputs; other sandbox changes remain remote. In Bash, write final result files, reports, exports, generated media, and artifacts under /home/daytona/outputs (or relative outputs/ from cwd) so the user can inspect or download them.\n- **PythonExec / JSExec / NodeExec / VfsToPyodide / PyodideToVfs are DISABLED.** Do not mention them in tool lists or attempt to call them — they are intentionally hidden because the sandbox is a full Linux container and Bash covers every case.\n- cwd for Bash defaults to /home/daytona. Do NOT pass cwd=/workspace — that directory does not exist in the Daytona default snapshot and the daemon will silently return exit -1 with an empty body.\nWhen the user asks "what tools do you have", list ONLY the tools that are actually exposed in this request — do not enumerate disabled tools.' : '';
   const memPrompt = await getCachedMemRecallForPrompt(projectedMessagesBase, { readOnly: !!options.readOnlyMemory, memoryRecallKey: options.memoryRecallKey });
+  if (run) activateConversationRun(run);
   rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });
   const anthropicTools = getEnabledToolsAnthropic();
   const openaiTools = getEnabledToolsOpenAI();
@@ -15562,7 +15567,9 @@ function estimateContextPartTokens(parts, body) {
   return { breakdown, total: Math.max(totalFromBody, totalFromParts) };
 }
 async function buildContextSnapshot(messages = buildConversationFromEntries(), headId = activeEntryId, options = {}) {
-  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: true, skipToolRender: true, memoryRecallKey: options.memoryRecallKey });
+  const run = options.run || currentRunContext || null;
+  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: true, skipToolRender: true, memoryRecallKey: options.memoryRecallKey, run });
+  if (run) activateConversationRun(run);
   const body = assembleRequestBodyFromParts(parts);
   const estimated = estimateContextPartTokens(parts, body);
   const maxContextTokens = Math.max(1, Number(currentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS);
@@ -15578,6 +15585,7 @@ function applyContextSnapshot(snapshot) {
   lastRequestContextSnapshot = snapshot;
   lastContextBreakdown = snapshot.breakdown || null;
   contextTokens = Math.max(0, Number(snapshot.totalEstimatedTokens) || 0);
+  if (currentRunContext) snapshotConversationRunState(currentRunContext);
 }
 function scheduleContextSnapshotRefresh() {
   if (_contextUiRefreshTimer) return;
@@ -15662,7 +15670,7 @@ function isContextLengthError(status, text, error) {
 
 async function checkAndCompact() {
   const run = currentRunContext;
-  const snapshot = await buildContextSnapshot();
+  const snapshot = await buildContextSnapshot(undefined, undefined, { run });
   if (run) activateConversationRun(run);
   applyContextSnapshot(snapshot);
   renderContextSnapshotUI(snapshot);
@@ -15775,7 +15783,8 @@ async function compactMemory(options = {}) {
     compactedEntryCount: toCompact.length
   });
   rebuildConversation();
-  const afterSnapshot = await buildContextSnapshot();
+  if (run) snapshotConversationRunState(run);
+  const afterSnapshot = await buildContextSnapshot(undefined, undefined, { run });
   if (run) activateConversationRun(run);
   applyContextSnapshot(afterSnapshot);
   logMemEntry('compact', `Compacted ${toCompact.length} messages → summary; kept ${keptEntries.length}`);
@@ -15948,7 +15957,9 @@ async function generateMediaPromptWithAI(userText, kind, headId = activeEntryId)
   }
 }
 async function buildRequestBody(messages = buildConversationFromEntries(), headId = activeEntryId, options = {}) {
-  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: false, memoryRecallKey: options.memoryRecallKey });
+  const run = options.run || currentRunContext || null;
+  const parts = await collectRequestContextParts(messages, headId, { readOnlyMemory: false, memoryRecallKey: options.memoryRecallKey, run });
+  if (run) activateConversationRun(run);
   return assembleRequestBodyFromParts(parts);
 }
 async function sendLLMRequestBody(body, signal) {
@@ -16237,10 +16248,10 @@ async function _runAgentLoop(userText, options = {}) {
       await checkAndCompact();
       if (run) activateConversationRun(run);
       const requestMessages = buildConversationFromEntries();
-      const requestSnapshot = await buildContextSnapshot(requestMessages, promptEntryId, { memoryRecallKey });
+      const requestSnapshot = await buildContextSnapshot(requestMessages, promptEntryId, { memoryRecallKey, run });
       if (run) activateConversationRun(run);
       applyContextSnapshot(requestSnapshot);
-      const body = await buildRequestBody(requestMessages, promptEntryId, { memoryRecallKey });
+      const body = await buildRequestBody(requestMessages, promptEntryId, { memoryRecallKey, run });
       if (run) activateConversationRun(run);
       const keepReasoning = shouldKeepReasoningForModel(body.model || API_MODEL);
       let estimatedRequestTokens = requestSnapshot.totalEstimatedTokens || estimateRequestBodyTokens(body);
@@ -16268,9 +16279,9 @@ async function _runAgentLoop(userText, options = {}) {
           appendSystemMsg('Context length exceeded. Compacting context and retrying once...');
           await compactMemory({ trigger: 'context_error', snapshot: requestSnapshot });
           const retryMessages = buildConversationFromEntries();
-          const retrySnapshot = await buildContextSnapshot(retryMessages, promptEntryId, { memoryRecallKey });
+          const retrySnapshot = await buildContextSnapshot(retryMessages, promptEntryId, { memoryRecallKey, run });
           applyContextSnapshot(retrySnapshot);
-          const retryBody = await buildRequestBody(retryMessages, promptEntryId, { memoryRecallKey });
+          const retryBody = await buildRequestBody(retryMessages, promptEntryId, { memoryRecallKey, run });
           retryBody.stream = true;
           estimatedRequestTokens = retrySnapshot.totalEstimatedTokens || estimateRequestBodyTokens(retryBody);
           retriedAfterContextCompact = true;
@@ -16394,8 +16405,9 @@ async function _runAgentLoop(userText, options = {}) {
       if (!fullText && result.content.some(b => b.type === 'tool_use') && result.content.every(b => b.type === 'tool_use' || b.type === 'reasoning')) msgEl.querySelector('[data-role="assistant-text"]')?.remove();
       const assistantEntry = appendSessionEntry('message', { role: 'assistant', content: result.content, promptEntryId, streamError: result.stream_error || undefined });
       rebuildConversation();
+      if (run) snapshotConversationRunState(run);
       msgEl.dataset.assistantEntryId = assistantEntry.id;
-      const postAssistantSnapshot = await buildContextSnapshot();
+      const postAssistantSnapshot = await buildContextSnapshot(undefined, undefined, { run });
       if (run) activateConversationRun(run);
       applyContextSnapshot(postAssistantSnapshot);
       updateMemoryUI();
@@ -16484,7 +16496,8 @@ async function _runAgentLoop(userText, options = {}) {
         }
         appendSessionEntry('tool_result', { content: trs, promptEntryId });
         rebuildConversation();
-        const postToolSnapshot = await buildContextSnapshot();
+        if (run) snapshotConversationRunState(run);
+        const postToolSnapshot = await buildContextSnapshot(undefined, undefined, { run });
         if (run) activateConversationRun(run);
         applyContextSnapshot(postToolSnapshot);
         setStatus('running', t('status.processing'));
@@ -16707,6 +16720,7 @@ async function appendMediaGenerationBubble({ mode, prompt, model, paths = [], er
   const title = t('media.saved') || 'Saved generated media:';
   appendSessionEntry('message', { role: 'assistant', content: [{ type: 'text', text: `${title}\n${paths.join('\n')}` }] });
   rebuildConversation();
+  if (currentRunContext) snapshotConversationRunState(currentRunContext);
   updateMemoryUI();
   saveCurrentConv(true);
   return msgEl;
@@ -16823,7 +16837,7 @@ function appendFilePreview(parentEl, content, filePath) {
   parentEl.appendChild(wrap);
   scrollBottom();
 }
-function appendSystemMsg(t) { const d = document.createElement('div'); d.className = 'msg msg-system'; d.innerHTML = `<div class="msg-body">${esc(t)}</div>`; getContextChatEl().appendChild(d); scrollBottom(); }
+function appendSystemMsg(t) { const d = document.createElement('div'); d.className = 'msg msg-system'; d.innerHTML = `<div class="msg-body">${esc(t)}</div>`; getContextChatEl().appendChild(d); scrollBottom(); if (currentRunContext) snapshotConversationRunState(currentRunContext); }
 function appendErrorBubble(t, meta = {}) {
   const { msgEl, textEl, reasoningEl } = appendAssistantBubble();
   msgEl.classList.add('msg-error');
@@ -17556,7 +17570,9 @@ async function mediaGenerationLoop(text, filePaths, usedSkills) {
   const mediaDisplay = getMediaPromptDisplay(mode, text);
   const userEntry = appendSessionEntry('message', { role: 'user', content: mediaDisplay, usedSkillNames: (usedSkills || []).map(sk => sk.name).filter(Boolean) });
   rebuildConversation();
+  snapshotConversationRunState(run);
   appendUserBubble(mediaDisplay, filePaths, usedSkills, findConversationIndexByEntryId(userEntry.id), userEntry.id);
+  snapshotConversationRunState(run);
   const titleText = getUserTextFromContent(mediaDisplay) || text;
   if (conversation.filter(m => m.role === 'user').length === 1 && convId && titleText) {
     scheduleConversationTitleGeneration(convId, titleText);
