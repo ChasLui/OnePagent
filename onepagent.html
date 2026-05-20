@@ -1004,6 +1004,8 @@ body { font-family: 'Inter', sans-serif; background: var(--bg-root); color: var(
 .conv-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; transition: all 0.15s; border: 1px solid transparent; }
 .conv-item:hover { background: var(--bg-hover); }
 .conv-item.active { background: var(--bg-card); border-color: var(--accent-orange); color: var(--accent-orange); }
+.conv-item.running { border-color: rgba(0,255,136,0.35); }
+.conv-item.running .c-run { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); box-shadow: 0 0 8px rgba(0,255,136,0.7); flex: none; }
 .conv-item.dragging { opacity: 0.45; }
 .conv-item .c-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conv-item .c-time { font-size: 9px; color: var(--text-dim); white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
@@ -4178,6 +4180,10 @@ let sessionEntries = [];
 let activeEntryId = null;
 let isGenerating = false;
 let abortCtrl = null;
+let visibleConvId = null;
+let currentRunContext = null;
+let visibleConversationState = null;
+const conversationRuns = new Map();
 let loopCount = 0;
 // Per-conversation todos (TodoWrite tool), sub-agent run metadata, and session-only plan mode flag.
 let todos = [];
@@ -4505,6 +4511,178 @@ function ensureSessionEntries() {
 function findConversationIndexByEntryId(entryId, headId = activeEntryId) {
   if (!entryId) return -1;
   return buildProjectedConversation(headId).findIndex(item => item.entryId === entryId);
+}
+function isConversationRunning(convId = visibleConvId || activeConvId) {
+  const run = convId ? conversationRuns.get(convId) : null;
+  return !!(run && run.active && !run.deleted);
+}
+function hasAnyConversationRunning() {
+  for (const run of conversationRuns.values()) if (run.active && !run.deleted) return true;
+  return false;
+}
+function getActiveConversationRun() {
+  return visibleConvId ? (conversationRuns.get(visibleConvId) || null) : null;
+}
+function getCurrentRunAbortSignal() {
+  return currentRunContext?.abortCtrl?.signal || abortCtrl?.signal;
+}
+function syncLegacyRunFlags() {
+  const run = getActiveConversationRun();
+  isGenerating = !!(run && run.active && !run.deleted);
+  abortCtrl = isGenerating ? run.abortCtrl : null;
+  if (!isGenerating && !hasAnyConversationRunning()) abortCtrl = null;
+}
+function captureConversationState(chatHTML) {
+  return {
+    convId: activeConvId,
+    conversation,
+    sessionEntries,
+    activeEntryId,
+    vfs,
+    cwd,
+    loopCount,
+    totalTokens,
+    contextTokens,
+    todos,
+    subAgentRuns,
+    planMode,
+    ralphModeEnabled,
+    ralphRun,
+    swarmRunActive,
+    lastUsageInfo,
+    lastInputTokens,
+    lastOutputTokens,
+    lastCacheReadTokens,
+    lastCacheWriteTokens,
+    lastTurnTokens,
+    lastRequestContextSnapshot,
+    lastContextBreakdown,
+    contextBreakdownExpanded,
+    currentViewFile,
+    agentSwarmRoles,
+    chatHTML: typeof chatHTML === 'string' ? chatHTML : (activeConvId === visibleConvId ? chatEl?.innerHTML || '' : '')
+  };
+}
+function applyConversationState(state = {}) {
+  activeConvId = state.convId || activeConvId;
+  conversation = Array.isArray(state.conversation) ? state.conversation : [];
+  sessionEntries = Array.isArray(state.sessionEntries) ? state.sessionEntries : [];
+  activeEntryId = state.activeEntryId || null;
+  vfs = state.vfs || { type: 'dir', children: {} };
+  cwd = state.cwd || '/';
+  loopCount = state.loopCount || 0;
+  totalTokens = state.totalTokens || 0;
+  contextTokens = state.contextTokens || 0;
+  todos = Array.isArray(state.todos) ? state.todos : [];
+  subAgentRuns = Array.isArray(state.subAgentRuns) ? state.subAgentRuns : [];
+  planMode = !!state.planMode;
+  ralphModeEnabled = !!state.ralphModeEnabled;
+  ralphRun = state.ralphRun || null;
+  swarmRunActive = state.swarmRunActive || null;
+  lastUsageInfo = state.lastUsageInfo || null;
+  lastInputTokens = state.lastInputTokens || 0;
+  lastOutputTokens = state.lastOutputTokens || 0;
+  lastCacheReadTokens = state.lastCacheReadTokens || 0;
+  lastCacheWriteTokens = state.lastCacheWriteTokens || 0;
+  lastTurnTokens = state.lastTurnTokens || 0;
+  lastRequestContextSnapshot = state.lastRequestContextSnapshot || null;
+  lastContextBreakdown = state.lastContextBreakdown || null;
+  contextBreakdownExpanded = !!state.contextBreakdownExpanded;
+  currentViewFile = state.currentViewFile || null;
+  if (swarmSettings.agentRolesPersist && swarmSettings.agentRolesPerConv) {
+    agentSwarmRoles = Array.isArray(state.agentSwarmRoles) ? state.agentSwarmRoles : [];
+  }
+}
+function ensureRunChatContainer(run) {
+  if (!run) return null;
+  if (!run.chatContainer) {
+    run.chatContainer = document.createElement('div');
+    if (run.state?.chatHTML) run.chatContainer.innerHTML = run.state.chatHTML;
+  }
+  return run.chatContainer;
+}
+function isRunVisible(run) {
+  return !!(run && run.convId && run.convId === visibleConvId);
+}
+function getContextChatEl() {
+  if (currentRunContext && !isRunVisible(currentRunContext)) {
+    return ensureRunChatContainer(currentRunContext);
+  }
+  return chatEl;
+}
+function getRunChatHTML(run) {
+  if (!run) return '';
+  if (isRunVisible(run) && chatEl) return chatEl.innerHTML;
+  if (run.chatContainer) return run.chatContainer.innerHTML;
+  return run.state?.chatHTML || '';
+}
+function snapshotConversationRunState(run) {
+  if (!run) return;
+  run.state = captureConversationState(getRunChatHTML(run));
+  run.state.convId = run.convId;
+  run.chatHTML = run.state.chatHTML;
+}
+function detachConversationRunDom(run) {
+  if (!run || !isRunVisible(run) || run.chatContainer || !chatEl) return;
+  const box = document.createElement('div');
+  while (chatEl.firstChild) box.appendChild(chatEl.firstChild);
+  run.chatContainer = box;
+  run.state = run.state || {};
+  run.state.chatHTML = box.innerHTML;
+  run.chatHTML = box.innerHTML;
+}
+function attachConversationRunDom(run) {
+  if (!run || !chatEl) return false;
+  if (run.chatContainer) {
+    chatEl.innerHTML = '';
+    while (run.chatContainer.firstChild) chatEl.appendChild(run.chatContainer.firstChild);
+    run.chatContainer = null;
+    return true;
+  }
+  if (run.state?.chatHTML) {
+    chatEl.innerHTML = run.state.chatHTML;
+    return true;
+  }
+  return false;
+}
+function activateConversationRun(run) {
+  if (!run || run.deleted) return;
+  const prevRun = activeConvId ? conversationRuns.get(activeConvId) : null;
+  if (prevRun && prevRun !== run) snapshotConversationRunState(prevRun);
+  else if (activeConvId && activeConvId !== run.convId && activeConvId === visibleConvId) {
+    visibleConversationState = captureConversationState(chatEl?.innerHTML || '');
+  }
+  currentRunContext = run;
+  applyConversationState(run.state || {});
+  activeConvId = run.convId;
+  if (!run.abortCtrl) run.abortCtrl = new AbortController();
+  isGenerating = isRunVisible(run);
+  abortCtrl = run.abortCtrl;
+}
+function ensureVisibleConversationStateActive() {
+  if (!visibleConvId || activeConvId === visibleConvId) return;
+  const run = conversationRuns.get(visibleConvId);
+  currentRunContext = null;
+  if (run) {
+    applyConversationState(run.state || {});
+    activeConvId = visibleConvId;
+    return;
+  }
+  if (visibleConversationState?.convId === visibleConvId) {
+    applyConversationState(visibleConversationState);
+    activeConvId = visibleConvId;
+  }
+}
+function stopConversationRun(convId = visibleConvId || activeConvId) {
+  const run = convId ? conversationRuns.get(convId) : null;
+  if (!run) return false;
+  run.cancelled = true;
+  if (run.state?.ralphRun?.active) run.state.ralphRun.cancelled = true;
+  if (run.abortCtrl) run.abortCtrl.abort();
+  syncLegacyRunFlags();
+  updateButtons();
+  renderConvList();
+  return true;
 }
 
 // Conversation history — metadata in localStorage, heavy data in IndexedDB
@@ -4855,7 +5033,8 @@ async function loadConvHistory() {
   if (convHistory.length) {
     const lastId = localStorage.getItem('ba_active_conv') || convHistory[0].id;
     const found = convHistory.find(c => c.id === lastId);
-    switchConversation(found ? found.id : convHistory[0].id, true);
+    visibleConvId = found ? found.id : convHistory[0].id;
+    switchConversation(visibleConvId, true);
   } else {
     newConversation(true);
   }
@@ -4993,17 +5172,17 @@ async function maybeGenerateConversationTitle(convId, firstQuestion) {
   }
 }
 
-async function saveCurrentConv(andRenderList) {
-  if (!activeConvId) return;
-  const meta = convHistory.find(c => c.id === activeConvId);
+async function saveConversationState(convId, state, options = {}) {
+  if (!convId || !state) return;
+  const meta = convHistory.find(c => c.id === convId);
   if (!meta) return;
-  rebuildConversation();
-  meta.loopCount = loopCount;
-  meta.totalTokens = totalTokens;
-  meta.contextTokens = contextTokens;
-  meta.messageCount = conversation.filter(m => m.role === 'user').length;
+  const conv = Array.isArray(state.conversation) ? state.conversation : [];
+  meta.loopCount = state.loopCount || 0;
+  meta.totalTokens = state.totalTokens || 0;
+  meta.contextTokens = state.contextTokens || 0;
+  meta.messageCount = conv.filter(m => m.role === 'user').length;
   meta.updated = Date.now();
-  const firstText = getFirstUserQuestionForTitle(conversation);
+  const firstText = getFirstUserQuestionForTitle(conv);
   const firstHash = firstText ? hashTitlePrompt(firstText) : '';
   const fallbackTitle = firstText ? makeLocalConversationTitleFallback(firstText) : '';
   const looksLikeAutoFallback = firstText && meta.title === fallbackTitle && (!meta.titlePromptHash || meta.titlePromptHash === firstHash);
@@ -5021,23 +5200,63 @@ async function saveCurrentConv(andRenderList) {
       meta.titleSource = 'fallback';
     }
     if (meta.titleSource !== 'ai' && meta.titleStatus !== 'generating') {
-      scheduleConversationTitleGeneration(activeConvId, firstText);
+      scheduleConversationTitleGeneration(convId, firstText);
     }
   }
   saveConvMeta();
-  const html = chatEl.innerHTML;
+  const html = state.chatHTML || '';
   // v4: only persist agent-tier roles per-conversation when the user explicitly opted in.
   // `undefined` is dropped by structured clone, so disabling perConv stops polluting historical convs.
-  const swarmAgentRoles = (swarmSettings.agentRolesPersist && swarmSettings.agentRolesPerConv) ? agentSwarmRoles : undefined;
-  await saveConvDataToDB(activeConvId, { conversation, sessionEntries, activeEntryId, vfs, chatHTML: html, totalTokens, contextTokens, loopCount, todos, subAgentRuns, lastUsageInfo, lastInputTokens, lastOutputTokens, lastCacheReadTokens, lastCacheWriteTokens, lastTurnTokens, swarmAgentRoles });
-  if (andRenderList) renderConvList();
+  const swarmAgentRoles = (swarmSettings.agentRolesPersist && swarmSettings.agentRolesPerConv) ? (state.agentSwarmRoles || []) : undefined;
+  await saveConvDataToDB(convId, {
+    conversation: conv,
+    sessionEntries: state.sessionEntries || [],
+    activeEntryId: state.activeEntryId || null,
+    vfs: state.vfs || { type: 'dir', children: {} },
+    chatHTML: html,
+    totalTokens: state.totalTokens || 0,
+    contextTokens: state.contextTokens || 0,
+    loopCount: state.loopCount || 0,
+    todos: state.todos || [],
+    subAgentRuns: state.subAgentRuns || [],
+    lastUsageInfo: state.lastUsageInfo || null,
+    lastInputTokens: state.lastInputTokens || 0,
+    lastOutputTokens: state.lastOutputTokens || 0,
+    lastCacheReadTokens: state.lastCacheReadTokens || 0,
+    lastCacheWriteTokens: state.lastCacheWriteTokens || 0,
+    lastTurnTokens: state.lastTurnTokens || 0,
+    swarmAgentRoles
+  });
+  if (options.andRenderList) renderConvList();
   if (typeof schedulePush === 'function') schedulePush();
 }
 
+async function saveCurrentConv(andRenderList) {
+  if (currentRunContext) {
+    snapshotConversationRunState(currentRunContext);
+    return saveConversationState(currentRunContext.convId, currentRunContext.state, { andRenderList });
+  }
+  if (!activeConvId) return;
+  const run = conversationRuns.get(activeConvId);
+  if (run) {
+    snapshotConversationRunState(run);
+    return saveConversationState(activeConvId, run.state, { andRenderList });
+  }
+  rebuildConversation();
+  return saveConversationState(activeConvId, captureConversationState(chatEl.innerHTML), { andRenderList });
+}
+
 function newConversation(skipSave, folderId) {
-  if (!skipSave) saveCurrentConv();
-  if (activeConvId && window._daytonaSessions && window._daytonaSessions[activeConvId]) {
-    daytonaClient.destroy(activeConvId).catch(() => {});
+  ensureVisibleConversationStateActive();
+  const fromRun = visibleConvId ? conversationRuns.get(visibleConvId) : null;
+  if (fromRun) {
+    detachConversationRunDom(fromRun);
+    snapshotConversationRunState(fromRun);
+    if (!skipSave) saveConversationState(fromRun.convId, fromRun.state);
+  } else if (!skipSave) saveCurrentConv();
+  const visibleBefore = visibleConvId || activeConvId;
+  if (visibleBefore && !isConversationRunning(visibleBefore) && window._daytonaSessions && window._daytonaSessions[visibleBefore]) {
+    daytonaClient.destroy(visibleBefore).catch(() => {});
   }
   const id = genConvId();
   const meta = { id, title: 'New Chat', titleSource: 'default', titleStatus: 'idle', titlePromptHash: '', created: Date.now(), updated: Date.now(), loopCount: 0, totalTokens: 0, contextTokens: 0, messageCount: 0 };
@@ -5048,6 +5267,8 @@ function newConversation(skipSave, folderId) {
   }
   convHistory.unshift(meta);
   activeConvId = id;
+  visibleConvId = id;
+  currentRunContext = null;
   conversation = [];
   sessionEntries = [];
   activeEntryId = null;
@@ -5073,28 +5294,57 @@ function newConversation(skipSave, folderId) {
   if (typeof renderTodos === 'function') renderTodos();
   if (typeof renderSubAgents === 'function') renderSubAgents();
   chatEl.innerHTML = '<div class="msg msg-system msg-placeholder"><div class="msg-body">New conversation. Upload files and type a task to begin.</div></div>';
+  visibleConversationState = captureConversationState(chatEl.innerHTML);
   // Remount active skills
   for (const s of skills) { if (s.active) mountSkillToVfs(s); }
   renderFileTree();
   updateMemoryUI();
   document.getElementById('memoryLog').innerHTML = '';
   closeFileViewer(true);
+  visibleConversationState = captureConversationState(chatEl.innerHTML);
   try { localStorage.setItem('ba_active_conv', id); } catch {}
+  syncLegacyRunFlags();
+  updateButtons();
+  setStatus('ready', t('status.ready'));
   if (!skipSave) { saveConvMeta(); renderConvList(); }
 }
 
 async function switchConversation(id, skipSave) {
-  if (isGenerating) return;
-  if (activeConvId === id && !skipSave) return;
+  ensureVisibleConversationStateActive();
+  if ((visibleConvId || activeConvId) === id && !skipSave) return;
   if (typeof closeMobileDrawers === 'function') closeMobileDrawers();
-  // Save current conversation in background (don't block switch)
-  if (!skipSave && activeConvId) saveCurrentConv();
+  const fromRun = visibleConvId ? conversationRuns.get(visibleConvId) : null;
+  if (fromRun) {
+    detachConversationRunDom(fromRun);
+    snapshotConversationRunState(fromRun);
+    if (!skipSave) saveConversationState(fromRun.convId, fromRun.state);
+  } else if (!skipSave && activeConvId) saveCurrentConv();
   const meta = convHistory.find(c => c.id === id);
   if (!meta) return;
   activeConvId = id;
+  visibleConvId = id;
+  currentRunContext = null;
   try { localStorage.setItem('ba_active_conv', id); } catch {}
   // Update UI immediately (mark active in list)
   renderConvList();
+  const targetRun = conversationRuns.get(id);
+  if (targetRun) {
+    applyConversationState(targetRun.state || {});
+    activeConvId = id;
+    if (!attachConversationRunDom(targetRun)) {
+      chatEl.innerHTML = targetRun.state?.chatHTML || '<div class="msg msg-system msg-placeholder"><div class="msg-body">Conversation running...</div></div>';
+    }
+    await hydrateMediaResultCards(chatEl);
+    renderFileTree();
+    updateMemoryUI();
+    renderTodos();
+    renderSubAgents();
+    closeFileViewer(true);
+    syncLegacyRunFlags();
+    updateButtons();
+    setStatus('running', targetRun.statusText || t('status.streaming'));
+    return;
+  }
   // Load heavy data from IndexedDB
   const data = await loadConvDataFromDB(id);
   sessionEntries = data?.sessionEntries || [];
@@ -5140,16 +5390,26 @@ async function switchConversation(id, skipSave) {
   renderFileTree();
   updateMemoryUI();
   closeFileViewer(true);
+  visibleConversationState = captureConversationState(chatEl.innerHTML);
+  syncLegacyRunFlags();
+  updateButtons();
+  setStatus('ready', t('status.ready'));
 }
 
 async function deleteConversation(id) {
-  if (isGenerating) return;
+  ensureVisibleConversationStateActive();
+  const run = conversationRuns.get(id);
+  if (run) {
+    run.deleted = true;
+    stopConversationRun(id);
+    conversationRuns.delete(id);
+  }
   if (window._daytonaSessions && window._daytonaSessions[id]) {
     daytonaClient.destroy(id).catch(() => {});
   }
   convHistory = convHistory.filter(c => c.id !== id);
   await deleteConvDataFromDB(id);
-  if (activeConvId === id) {
+  if ((visibleConvId || activeConvId) === id) {
     if (convHistory.length) await switchConversation(convHistory[0].id, true);
     else newConversation(true);
   }
@@ -5431,12 +5691,15 @@ function renderConvList(options = {}) {
     return;
   }
   const convItemHtml = (c, opts = {}) => {
-    const active = c.id === activeConvId ? ' active' : '';
+    const active = c.id === (visibleConvId || activeConvId) ? ' active' : '';
+    const running = isConversationRunning(c.id) ? ' running' : '';
     const inFolder = opts.inFolder ? ' in-folder' : '';
     const time = new Date(c.updated || c.created).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     const msgs = Number(c.messageCount || 0);
     const dragAttrs = opts.searchMode ? 'draggable="false"' : `draggable="true" ondragstart="onConvDragStart(event,'${esc(c.id)}')" ondragend="onConvDragEnd(event)"`;
-    return `<div class="conv-item${active}${inFolder}" data-id="${esc(c.id)}" ${dragAttrs} onclick="switchConversation('${esc(c.id)}')" oncontextmenu="showConvCtxMenu(event,'${esc(c.id)}')">
+    const runDot = running ? '<span class="c-run" title="Running"></span>' : '';
+    return `<div class="conv-item${active}${running}${inFolder}" data-id="${esc(c.id)}" ${dragAttrs} onclick="switchConversation('${esc(c.id)}')" oncontextmenu="showConvCtxMenu(event,'${esc(c.id)}')">
+      ${runDot}
       <span class="c-title">${esc(c.title || 'New Chat')}</span>
       <span class="c-time">${msgs}msg ${time}</span>
       <span class="c-del" onclick="event.stopPropagation();deleteConversation('${esc(c.id)}')" title="Delete">&times;</span>
@@ -6990,14 +7253,15 @@ function _daytonaShellHint(combined) {
   return 'Daytona sandbox cannot spawn its login shell — the snapshot is missing the required binary (commonly /usr/bin/zsh). Fix: open Settings → Code Sandbox and clear DAYTONA_IMAGE so Daytona falls back to its working built-in snapshot, or pin an image that ships the required shell. Original error follows:\n';
 }
 async function _remoteWrap(input, exec) {
-  if (!activeConvId) return 'Error: no active conversation to bind a remote sandbox to.';
-  const convId = activeConvId;
+  const run = currentRunContext;
+  const convId = run?.convId || activeConvId;
+  if (!convId) return 'Error: no active conversation to bind a remote sandbox to.';
   const t0 = Date.now();
-  try { await syncVfsToRemote(convId, input); } catch (e) { return 'Error (sandbox syncIn): ' + (e.message || e); }
+  try { await syncVfsToRemote(convId, input); if (run) activateConversationRun(run); } catch (e) { return 'Error (sandbox syncIn): ' + (e.message || e); }
   let res;
-  try { res = await exec(convId); }
+  try { res = await exec(convId); if (run) activateConversationRun(run); }
   catch (e) { return 'Error (sandbox exec): ' + (e.message || e); }
-  try { await syncVfsFromRemote(convId, t0 - 1000); } catch (e) { console.warn('syncOut failed:', e?.message || e); }
+  try { await syncVfsFromRemote(convId, t0 - 1000); if (run) activateConversationRun(run); } catch (e) { console.warn('syncOut failed:', e?.message || e); }
   const { stdout = '', stderr = '', exitCode = 0, _raw = null } = res || {};
   const hint = _daytonaShellHint(stdout + '\n' + stderr);
   if (exitCode && !stdout && !stderr) {
@@ -7541,6 +7805,7 @@ function renderSkills() {
 }
 
 function renderTodos() {
+  if (currentRunContext && !isRunVisible(currentRunContext)) return;
   const el = document.getElementById('todosArea');
   const counts = document.getElementById('todoCounts');
   if (!el) return;
@@ -7564,6 +7829,7 @@ function renderTodos() {
 }
 
 function renderSubAgents() {
+  if (currentRunContext && !isRunVisible(currentRunContext)) return;
   const el = document.getElementById('subAgentsArea');
   const counts = document.getElementById('subAgentCounts');
   if (!el) return;
@@ -10386,7 +10652,7 @@ function renderPlanButton() {
   }
 }
 function toggleRalphMode() {
-  if (isGenerating) return;
+  if (isConversationRunning(visibleConvId || activeConvId)) return;
   ralphModeEnabled = !ralphModeEnabled;
   renderRalphButton();
   appendSystemMsg(ralphModeEnabled
@@ -10394,6 +10660,7 @@ function toggleRalphMode() {
     : 'Ralph Loop OFF.');
 }
 function renderRalphButton() {
+  if (currentRunContext && !isRunVisible(currentRunContext)) return;
   const btn = document.getElementById('ralphBtn');
   if (!btn) return;
   const active = ralphModeEnabled || !!ralphRun?.active;
@@ -12833,6 +13100,7 @@ async function executeSubAgentTool(name, input, run, roleConfig) {
   return { output: limited, isError: limited.startsWith('Error:') };
 }
 async function runSubAgentLoop({ run, task, context, maxSteps, roleConfig, modelOverride }) {
+  const convRun = currentRunContext;
   const subMessages = [{ role: 'user', content: [
     { type: 'text', text: ['Delegated task:', task, '', 'Additional context:', context || '(none)'].join('\n') }
   ] }];
@@ -12850,15 +13118,18 @@ async function runSubAgentLoop({ run, task, context, maxSteps, roleConfig, model
       }
     }
     const body = await buildSubAgentRequestBody(subMessages, activeEntryId, { memoryRecallKey, roleConfig, modelOverride });
+    if (convRun) activateConversationRun(convRun);
     body.stream = true;
     if (PROVIDER !== 'anthropic_compat') body.stream_options = { ...(body.stream_options || {}), include_usage: true };
-    const resp = await sendLLMRequestBody(body, abortCtrl?.signal);
+    const resp = await sendLLMRequestBody(body, getCurrentRunAbortSignal());
+    if (convRun) activateConversationRun(convRun);
     if (!resp.ok) return { ok: false, text: `Sub-agent API Error (${resp.status}): ${(await resp.text()).slice(0, 500)}`, steps: step, tokens: workerTokens };
     const reader = resp.body.getReader();
     const keepReasoning = shouldKeepReasoningForModel(body.model || API_MODEL);
     const result = PROVIDER === 'anthropic_compat'
       ? await parseAnthropicStream(reader, () => {}, () => {}, () => {}, () => {})
       : await parseOpenAIStream(reader, () => {}, () => {}, () => {}, () => {}, { keepReasoning, includeReasoningUsage: keepReasoning });
+    if (convRun) activateConversationRun(convRun);
     if (result.stream_error) return { ok: false, text: `Sub-agent stream interrupted: ${result.stream_error}`, steps: step, tokens: workerTokens };
     // Track tokens for swarm budget
     const usage = result.usage || {};
@@ -12878,6 +13149,7 @@ async function runSubAgentLoop({ run, task, context, maxSteps, roleConfig, model
     const toolResults = [];
     for (const tu of toolUses) {
       const toolResult = await executeSubAgentTool(tu.name, tu.input, run, roleConfig);
+      if (convRun) activateConversationRun(convRun);
       toolResults.push(PROVIDER === 'anthropic_compat'
         ? { type: 'tool_result', tool_use_id: tu.id, content: toolResult.output, is_error: toolResult.isError || undefined }
         : { type: 'tool_result', tool_use_id: tu.id, content: toolResult.output });
@@ -13400,20 +13672,23 @@ async function _shadowRemoteBytes(convId, paths, bytes) {
 }
 
 async function toolReadRemote(input) {
-  if (!activeConvId) return 'Error: no active conversation to bind a remote sandbox to.';
+  const run = currentRunContext;
+  const convId = run?.convId || activeConvId;
+  if (!convId) return 'Error: no active conversation to bind a remote sandbox to.';
   const fp = input?.file_path || '';
   if (!String(fp).trim()) return 'Error: file_path is required.';
   const paths = _remoteToolFilePaths(fp);
   try {
-    const bytes = await daytonaClient.readFile(activeConvId, paths.remotePath, true);
-    await _shadowRemoteBytes(activeConvId, paths, bytes);
+    const bytes = await daytonaClient.readFile(convId, paths.remotePath, true);
+    if (run) activateConversationRun(run);
+    await _shadowRemoteBytes(convId, paths, bytes);
     if (!_looksLikeText(bytes)) return `[Binary file: ${paths.vfsPath}, ${bytes.length} bytes]`;
     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
     return _formatReadText(text, input);
   } catch (e) {
     const local = _readVfsForTool(input, paths.vfsPath);
     if (local.ok) {
-      try { await _copyVfsFileToRemote(activeConvId, paths); } catch {}
+      try { await _copyVfsFileToRemote(convId, paths); } catch {}
       return local.output;
     }
     return `File not found in sandbox or VFS: ${fp}\nSandbox path: ${paths.remotePath}\nSandbox error: ${e?.message || e}`;
@@ -13421,23 +13696,28 @@ async function toolReadRemote(input) {
 }
 
 async function toolWriteRemote(input) {
-  if (!activeConvId) return 'Error: no active conversation to bind a remote sandbox to.';
+  const run = currentRunContext;
+  const convId = run?.convId || activeConvId;
+  if (!convId) return 'Error: no active conversation to bind a remote sandbox to.';
   if (!String(input?.file_path || '').trim()) return 'Error: file_path is required.';
   const paths = _remoteToolFilePaths(input?.file_path || '');
   const content = String(input?.content ?? '');
   try {
-    await daytonaClient.writeFile(activeConvId, paths.remotePath, content);
+    await daytonaClient.writeFile(convId, paths.remotePath, content);
+    if (run) activateConversationRun(run);
   } catch (e) {
     return `Error (sandbox Write ${paths.remotePath}): ${e?.message || e}`;
   }
   const r = vfsWrite(paths.vfsPath, content);
   if (r.error) return r.error;
-  _rememberRemoteShadow(activeConvId, paths.vfsPath);
+  _rememberRemoteShadow(convId, paths.vfsPath);
   return `File created in sandbox at: ${paths.remotePath} (VFS shadow: ${r.path}, ${r.bytes} bytes)`;
 }
 
 async function toolEditRemote(input) {
-  if (!activeConvId) return 'Error: no active conversation to bind a remote sandbox to.';
+  const run = currentRunContext;
+  const convId = run?.convId || activeConvId;
+  if (!convId) return 'Error: no active conversation to bind a remote sandbox to.';
   if (!String(input?.file_path || '').trim()) return 'Error: file_path is required.';
   const paths = _remoteToolFilePaths(input?.file_path || '');
   const oldStr = String(input?.old_str ?? '');
@@ -13445,7 +13725,8 @@ async function toolEditRemote(input) {
   if (!oldStr) return 'Error: old_str is required.';
   let content = '';
   try {
-    const bytes = await daytonaClient.readFile(activeConvId, paths.remotePath, true);
+    const bytes = await daytonaClient.readFile(convId, paths.remotePath, true);
+    if (run) activateConversationRun(run);
     if (!_looksLikeText(bytes)) return `Error: cannot edit binary file in sandbox: ${paths.remotePath}`;
     content = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   } catch (e) {
@@ -13458,12 +13739,13 @@ async function toolEditRemote(input) {
   if (c > 1) return `Error: old_str matches ${c} locations in ${paths.remotePath}. Make it more specific.`;
   const next = content.replace(oldStr, newStr);
   try {
-    await daytonaClient.writeFile(activeConvId, paths.remotePath, next);
+    await daytonaClient.writeFile(convId, paths.remotePath, next);
+    if (run) activateConversationRun(run);
   } catch (e) {
     return `Error (sandbox Edit ${paths.remotePath}): ${e?.message || e}`;
   }
   vfsWrite(paths.vfsPath, next);
-  _rememberRemoteShadow(activeConvId, paths.vfsPath);
+  _rememberRemoteShadow(convId, paths.vfsPath);
   return `Successfully edited sandbox file ${paths.remotePath} (VFS shadow: ${paths.vfsPath})`;
 }
 
@@ -13617,10 +13899,12 @@ function buildUnattendedHitlResult(input) {
   return { status: 'cancelled', mode: 'text', answer: '', reason };
 }
 async function toolAskUser(input) {
+  const run = currentRunContext;
   const prompt = String(input?.prompt || '').trim();
   if (!prompt) return 'Error: "prompt" is required.';
   if (ralphRun?.active) return JSON.stringify(buildUnattendedHitlResult({ ...(input || {}), prompt }), null, 2);
   const result = await showHitlModal({ ...(input || {}), prompt });
+  if (run) activateConversationRun(run);
   return JSON.stringify(result, null, 2);
 }
 
@@ -13888,6 +14172,7 @@ function shouldDefaultCollapseDir(path) {
 }
 
 function renderFileTree() {
+  if (currentRunContext && !isRunVisible(currentRunContext)) return;
   const el = document.getElementById('fileTree');
   // Drop stale selections whose path no longer resolves.
   for (const sp of [...feSelected]) { if (!vfsResolve(sp)) feSelected.delete(sp); }
@@ -15309,6 +15594,7 @@ function scheduleContextSnapshotRefresh() {
   }, 120);
 }
 function renderContextSnapshotUI(snapshot = lastRequestContextSnapshot) {
+  if (currentRunContext && !isRunVisible(currentRunContext)) return;
   const mc = snapshot?.projectedMessageCount ?? conversation.length;
   const currentContext = Math.max(0, Number(snapshot?.totalEstimatedTokens ?? contextTokens) || 0);
   const limit = Math.max(1, Number(snapshot?.effectiveContextTokens ?? currentMaxContextTokens) || DEFAULT_MAX_CONTEXT_TOKENS);
@@ -15327,6 +15613,7 @@ function renderContextSnapshotUI(snapshot = lastRequestContextSnapshot) {
   renderContextBreakdown(snapshot);
 }
 function updateMemoryUI() {
+  if (currentRunContext && !isRunVisible(currentRunContext)) return;
   renderContextSnapshotUI(lastRequestContextSnapshot);
   scheduleContextSnapshotRefresh();
 }
@@ -15358,6 +15645,7 @@ function renderContextBreakdown(snapshot = lastRequestContextSnapshot) {
 }
 
 function logMemEntry(type, text) {
+  if (currentRunContext && !isRunVisible(currentRunContext)) return;
   const el = document.getElementById('memoryLog');
   const d = document.createElement('div');
   d.className = `mem-entry ${type}`;
@@ -15373,12 +15661,15 @@ function isContextLengthError(status, text, error) {
 }
 
 async function checkAndCompact() {
+  const run = currentRunContext;
   const snapshot = await buildContextSnapshot();
+  if (run) activateConversationRun(run);
   applyContextSnapshot(snapshot);
   renderContextSnapshotUI(snapshot);
   if (snapshot.fillRatio >= CONTEXT_AUTO_COMPACT_RATIO) {
     appendSystemMsg(`Context approaching limit (${Math.round(snapshot.fillRatio * 100)}%). Auto-compacting...`);
     await compactMemory({ trigger: 'auto', snapshot });
+    if (run) activateConversationRun(run);
   } else if (snapshot.fillRatio >= CONTEXT_WARNING_RATIO) {
     logMemEntry(snapshot.fillRatio >= CONTEXT_CRITICAL_RATIO ? 'compact' : 'read', `Context ${Math.round(snapshot.fillRatio * 100)}% full; output reserve ${formatTokenCount(snapshot.outputReserveTokens)}`);
   }
@@ -15417,6 +15708,7 @@ function selectRecentEntriesByTokenBudget(entries, budgetTokens) {
 }
 
 async function compactMemory(options = {}) {
+  const run = currentRunContext;
   rebuildConversation();
   if (conversation.length <= 6 || !activeEntryId || !sessionEntries.length) return;
   logMemEntry('compact', 'Compacting via LLM...');
@@ -15457,8 +15749,10 @@ async function compactMemory(options = {}) {
   try {
     summaryBody.stream = false;
     const resp = await fetchWithRetry(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(summaryBody) });
+    if (run) activateConversationRun(run);
     if (resp.ok) {
       const data = await resp.json();
+      if (run) activateConversationRun(run);
       totalTokens += extractUsageTotal(data.usage);
       if (PROVIDER === 'anthropic_compat') summary = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
       else summary = data.choices?.[0]?.message?.content || '';
@@ -15482,6 +15776,7 @@ async function compactMemory(options = {}) {
   });
   rebuildConversation();
   const afterSnapshot = await buildContextSnapshot();
+  if (run) activateConversationRun(run);
   applyContextSnapshot(afterSnapshot);
   logMemEntry('compact', `Compacted ${toCompact.length} messages → summary; kept ${keptEntries.length}`);
   appendSystemMsg(`Compacted ${toCompact.length} messages.`);
@@ -15641,7 +15936,7 @@ async function generateMediaPromptWithAI(userText, kind, headId = activeEntryId)
     const body = PROVIDER === 'anthropic_compat'
       ? { model: API_MODEL, max_tokens: 900, system, messages: [{ role: 'user', content: request }] }
       : { model: API_MODEL, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: request }] };
-    const resp = await fetchWithRetry(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body), signal: abortCtrl?.signal });
+    const resp = await fetchWithRetry(getLLMUrl(), { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body), signal: getCurrentRunAbortSignal() });
     if (!resp.ok) return fallback;
     const data = await resp.json();
     const text = PROVIDER === 'anthropic_compat'
@@ -15788,11 +16083,43 @@ async function parseOpenAIStream(reader, onText, onReasoning, onToolStart, onToo
 // AGENT LOOP
 // ═══════════════════════════════════════════════════════════════════
 async function agentLoop(userContent, displayText, fileList, usedSkills, options = {}) {
+  ensureVisibleConversationStateActive();
+  const convId = visibleConvId || activeConvId;
+  if (!convId || isConversationRunning(convId)) return;
+  const run = {
+    convId,
+    active: true,
+    kind: 'chat',
+    abortCtrl: new AbortController(),
+    startedAt: Date.now(),
+    statusType: 'running',
+    statusText: t('status.thinking'),
+    state: captureConversationState(chatEl.innerHTML),
+    chatContainer: null,
+    chatHTML: chatEl.innerHTML,
+    cancelled: false,
+    deleted: false
+  };
+  conversationRuns.set(convId, run);
+  activateConversationRun(run);
+  updateButtons();
+  renderConvList();
   const usedSkillNames = (usedSkills || []).map(sk => sk.name).filter(Boolean);
   // on_user_submit hook: may block or rewrite the user's text
   const userTextPre = getUserTextFromContent(userContent) || displayText || '';
   const submitCtx = await runHooks('on_user_submit', { text: userTextPre, files: fileList || [], usedSkills: usedSkillNames });
-  if (submitCtx._blocked) { appendSystemMsg(`Blocked by hook [${submitCtx._blocked.by}]: ${submitCtx._blocked.reason}`); return; }
+  activateConversationRun(run);
+  if (submitCtx._blocked) {
+    appendSystemMsg(`Blocked by hook [${submitCtx._blocked.by}]: ${submitCtx._blocked.reason}`);
+    snapshotConversationRunState(run);
+    run.active = false;
+    conversationRuns.delete(convId);
+    await saveConversationState(convId, run.state, { andRenderList: true });
+    currentRunContext = null;
+    syncLegacyRunFlags();
+    updateButtons();
+    return;
+  }
   if (typeof submitCtx.text === 'string' && submitCtx.text !== userTextPre) {
     // Replace the first text block in userContent with the rewritten text.
     if (Array.isArray(userContent)) {
@@ -15808,10 +16135,11 @@ async function agentLoop(userContent, displayText, fileList, usedSkills, options
   const promptIndex = findConversationIndexByEntryId(userEntry.id);
   const userText = getUserTextFromContent(userContent) || displayText || '';
   appendUserBubble(displayText || userText, fileList, usedSkills, promptIndex, userEntry.id);
-  if (conversation.filter(m => m.role === 'user').length === 1 && activeConvId && userText) {
-    scheduleConversationTitleGeneration(activeConvId, userText);
+  if (conversation.filter(m => m.role === 'user').length === 1 && convId && userText) {
+    scheduleConversationTitleGeneration(convId, userText);
   }
-  await _runAgentLoop(userText, { promptIndex, promptEntryId: userEntry.id, fileList, ralph: options.ralph });
+  snapshotConversationRunState(run);
+  await _runAgentLoop(userText, { promptIndex, promptEntryId: userEntry.id, fileList, ralph: options.ralph, convId, run });
 }
 
 // Extract readable content from partial tool JSON for live preview
@@ -15882,7 +16210,9 @@ function isNearBottom(el, threshold = 24) {
 }
 
 async function _runAgentLoop(userText, options = {}) {
-  isGenerating = true; updateButtons(); setStatus('running', t('status.thinking'));
+  const run = options.run || (options.convId ? conversationRuns.get(options.convId) : null);
+  if (run) activateConversationRun(run);
+  isGenerating = isRunVisible(run); updateButtons(); setStatus('running', t('status.thinking'));
   rebuildConversation();
   // Reset per-turn swarm accounting (workers from a prior turn don't carry budget over).
   if (swarmRunActive) endSwarmRun();
@@ -15898,15 +16228,20 @@ async function _runAgentLoop(userText, options = {}) {
     renderRalphButton();
   }
   let stoppedBy = 'done';
-  abortCtrl = new AbortController();
+  if (run && !run.abortCtrl) run.abortCtrl = new AbortController();
+  abortCtrl = run?.abortCtrl || new AbortController();
   try {
     while (true) {
+      if (run) activateConversationRun(run);
       loopCount++; updateMemoryUI();
       await checkAndCompact();
+      if (run) activateConversationRun(run);
       const requestMessages = buildConversationFromEntries();
       const requestSnapshot = await buildContextSnapshot(requestMessages, promptEntryId, { memoryRecallKey });
+      if (run) activateConversationRun(run);
       applyContextSnapshot(requestSnapshot);
       const body = await buildRequestBody(requestMessages, promptEntryId, { memoryRecallKey });
+      if (run) activateConversationRun(run);
       const keepReasoning = shouldKeepReasoningForModel(body.model || API_MODEL);
       let estimatedRequestTokens = requestSnapshot.totalEstimatedTokens || estimateRequestBodyTokens(body);
       body.stream = true;
@@ -15924,8 +16259,9 @@ async function _runAgentLoop(userText, options = {}) {
       msgEl.dataset.loopBase = String(loopBase);
       let resp;
       let retriedAfterContextCompact = false;
-      try { resp = await sendLLMRequestBody(body, abortCtrl.signal); }
+      try { resp = await sendLLMRequestBody(body, (run?.abortCtrl || abortCtrl).signal); }
       catch (e) { msgEl.remove(); throw e; }
+      if (run) activateConversationRun(run);
       if (!resp.ok) {
         const errorText = await resp.text();
         if (isContextLengthError(resp.status, errorText) && !retriedAfterContextCompact) {
@@ -15939,7 +16275,8 @@ async function _runAgentLoop(userText, options = {}) {
           estimatedRequestTokens = retrySnapshot.totalEstimatedTokens || estimateRequestBodyTokens(retryBody);
           retriedAfterContextCompact = true;
           if (PROVIDER !== 'anthropic_compat') retryBody.stream_options = { ...(retryBody.stream_options || {}), include_usage: true };
-          resp = await sendLLMRequestBody(retryBody, abortCtrl.signal);
+          resp = await sendLLMRequestBody(retryBody, (run?.abortCtrl || abortCtrl).signal);
+          if (run) activateConversationRun(run);
           if (!resp.ok) { msgEl.remove(); appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); break; }
         } else {
           msgEl.remove();
@@ -15953,13 +16290,14 @@ async function _runAgentLoop(userText, options = {}) {
       textEl.innerHTML = '<span class="streaming-cursor"></span>';
       setStatus('running', t('status.streaming'));
       let fullText = '';
-      const onText = chunk => { fullText += chunk; renderMdThrottled(textEl, fullText); scrollBottom(); };
-      const onReasoning = chunk => { appendReasoningChunk(reasoningEl, chunk); scrollBottom(); };
+      const onText = chunk => { if (run) activateConversationRun(run); fullText += chunk; renderMdThrottled(textEl, fullText); scrollBottom(); if (run) snapshotConversationRunState(run); };
+      const onReasoning = chunk => { if (run) activateConversationRun(run); appendReasoningChunk(reasoningEl, chunk); scrollBottom(); if (run) snapshotConversationRunState(run); };
       // Live tool generation preview
       const _toolEls = []; // all live tool cards for cleanup
       const _toolMap = {}; // index -> { el, name, json }
       let _toolRenderTimer = null;
       const onToolStart = (block) => {
+        if (run) activateConversationRun(run);
         const toolIndex = block.index ?? Object.keys(_toolMap).length;
         if (_toolMap[toolIndex]) return;
         const entry = { name: block.name, json: '', el: null };
@@ -15974,6 +16312,7 @@ async function _runAgentLoop(userText, options = {}) {
         setStatus('running', `${block.name}...`);
       };
       const onToolDelta = (idx, partial) => {
+        if (run) activateConversationRun(run);
         const entry = _toolMap[idx];
         if (!entry) return;
         entry.json += partial;
@@ -16001,6 +16340,7 @@ async function _runAgentLoop(userText, options = {}) {
         if (isAbortError(e)) throw e;
         result = { content: fullText ? [{ type: 'text', text: fullText }] : [], stop_reason: 'interrupted', usage_total: 0, stream_error: e?.message || String(e || 'Network error') };
       }
+      if (run) activateConversationRun(run);
       if (result.stream_error) {
         const partialToolText = Object.values(_toolMap).map(tool => {
           const content = _extractToolContent(tool.name, tool.json).trim();
@@ -16055,18 +16395,23 @@ async function _runAgentLoop(userText, options = {}) {
       const assistantEntry = appendSessionEntry('message', { role: 'assistant', content: result.content, promptEntryId, streamError: result.stream_error || undefined });
       rebuildConversation();
       msgEl.dataset.assistantEntryId = assistantEntry.id;
-      applyContextSnapshot(await buildContextSnapshot());
+      const postAssistantSnapshot = await buildContextSnapshot();
+      if (run) activateConversationRun(run);
+      applyContextSnapshot(postAssistantSnapshot);
       updateMemoryUI();
       await runHooks('on_assistant_response', { content: result.content, loopCount, stopReason: result.stop_reason });
+      if (run) activateConversationRun(run);
       let ralphDecision = null;
       const tus = result.stream_error ? [] : result.content.filter(b => b.type === 'tool_use');
       if (tus.length) {
         // Per-tool execution closure: runs hooks, executes the tool, appends the UI card,
         // and returns the tool_result block. Used both sequentially and via Promise.all (for SwarmSpawn batches).
         const processOneTu = async (tu, toolOrder) => {
+          if (run) activateConversationRun(run);
           const liveEntry = _toolMap[tu.index ?? toolOrder];
           let effectiveInput = tu.input;
           const preCtx = await runHooks('pre_tool', { name: tu.name, input: tu.input, toolUseId: tu.id });
+          if (run) activateConversationRun(run);
           if (preCtx._blocked) {
             const blocked = `Error: blocked by hook [${preCtx._blocked.by}]: ${preCtx._blocked.reason}`;
             appendToolCard(msgEl, tu, blocked, true, liveEntry?.el || null);
@@ -16082,21 +16427,25 @@ async function _runAgentLoop(userText, options = {}) {
           let out;
           try {
             out = await executeTool(tu.name, effectiveInput);
+            if (run) activateConversationRun(run);
           } finally {
             removeMediaRenderProgress(mediaProgressEl);
           }
           let isErr = typeof out === 'string' && out.startsWith('Error:');
           if (isErr) {
             const errCtx = await runHooks('on_error', { name: tu.name, input: effectiveInput, output: out, toolUseId: tu.id, error: out });
+            if (run) activateConversationRun(run);
             if (Object.prototype.hasOwnProperty.call(errCtx, 'output') && errCtx.output !== out) { out = errCtx.output; isErr = typeof out === 'string' && out.startsWith('Error:'); }
           } else {
             const postCtx = await runHooks('post_tool', { name: tu.name, input: effectiveInput, output: out, toolUseId: tu.id, isError: false });
+            if (run) activateConversationRun(run);
             if (Object.prototype.hasOwnProperty.call(postCtx, 'output') && postCtx.output !== out) { out = postCtx.output; isErr = typeof out === 'string' && out.startsWith('Error:'); }
           }
           const isMediaTool = tu.name === 'GenerateImage' || tu.name === 'GenerateVideo';
           if (isMediaTool && !isErr) {
             if (liveEntry?.el?.isConnected) liveEntry.el.remove();
             if (!(await appendMediaResultOnly(msgEl, out))) appendToolCard(msgEl, tu, out, isErr, liveEntry?.el || null);
+            if (run) activateConversationRun(run);
           } else {
             appendToolCard(msgEl, tu, out, isErr, liveEntry?.el || null);
           }
@@ -16118,12 +16467,14 @@ async function _runAgentLoop(userText, options = {}) {
             while (k < group.length) {
               const slice = group.slice(k, k + cap);
               const results = await Promise.all(slice.map(g => processOneTu(g.tu, g.order)));
+              if (run) activateConversationRun(run);
               for (let m = 0; m < slice.length; m++) trsByIndex[slice[m].order] = results[m];
               k += cap;
             }
             i = j;
           } else {
             trsByIndex[i] = await processOneTu(tus[i], i);
+            if (run) activateConversationRun(run);
             i++;
           }
         }
@@ -16133,7 +16484,9 @@ async function _runAgentLoop(userText, options = {}) {
         }
         appendSessionEntry('tool_result', { content: trs, promptEntryId });
         rebuildConversation();
-        applyContextSnapshot(await buildContextSnapshot());
+        const postToolSnapshot = await buildContextSnapshot();
+        if (run) activateConversationRun(run);
+        applyContextSnapshot(postToolSnapshot);
         setStatus('running', t('status.processing'));
         scrollBottom();
       }
@@ -16170,14 +16523,38 @@ async function _runAgentLoop(userText, options = {}) {
       break;
     }
   } catch (e) {
+    if (run) activateConversationRun(run);
     if (e.name === 'AbortError') stoppedBy = 'abort';
     else appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase });
   }
   finally {
+    if (run) activateConversationRun(run);
     const ralphSummary = ralphRun?.active ? { active: true, iteration: ralphRun.iteration, unlimited: ralphRun.unlimited, maxIterations: ralphRun.maxIterations, completionMarker: ralphRun.completionMarker, stopReason: ralphRun.stopReason || (stoppedBy === 'abort' ? 'abort' : 'done') } : undefined;
     ralphRun = null;
     if (swarmRunActive) endSwarmRun();
-    isGenerating = false; abortCtrl = null; updateButtons(); setStatus('ready', t('status.ready')); renderRalphButton(); updateMemoryUI(); saveCurrentConv(true);
+    isGenerating = false; abortCtrl = null;
+    if (run) {
+      run.active = false;
+      run.finishedAt = Date.now();
+      run.statusType = 'ready';
+      run.statusText = stoppedBy === 'abort' ? 'Stopped' : t('status.ready');
+      snapshotConversationRunState(run);
+      if (!run.deleted) await saveConversationState(run.convId, run.state, { andRenderList: true });
+      conversationRuns.delete(run.convId);
+      if (visibleConvId === run.convId) {
+        applyConversationState(run.state);
+        activeConvId = run.convId;
+        visibleConversationState = run.state;
+      }
+      currentRunContext = null;
+      if (visibleConvId && visibleConvId !== run.convId) ensureVisibleConversationStateActive();
+    } else {
+      saveCurrentConv(true);
+    }
+    syncLegacyRunFlags(); updateButtons();
+    const visibleRun = getActiveConversationRun();
+    setStatus(visibleRun?.active ? 'running' : 'ready', visibleRun?.active ? (visibleRun.statusText || t('status.streaming')) : t('status.ready'));
+    renderRalphButton(); updateMemoryUI();
     try { await runHooks('on_stop', { loopCount, totalTokens, stoppedBy, ralph: ralphSummary }); } catch {}
   }
 }
@@ -16189,10 +16566,11 @@ const chatEl = document.getElementById('chatMessages');
 let _autoScrollChat = true;
 chatEl.addEventListener('scroll', () => { _autoScrollChat = isNearBottom(chatEl, 48); });
 function scrollBottom(force = false) {
-  if (force || _autoScrollChat) chatEl.scrollTop = chatEl.scrollHeight;
+  const target = getContextChatEl();
+  if (target === chatEl && (force || _autoScrollChat)) chatEl.scrollTop = chatEl.scrollHeight;
 }
 function clearChatPlaceholder() {
-  const ph = chatEl.querySelector('.msg-placeholder');
+  const ph = getContextChatEl()?.querySelector('.msg-placeholder');
   if (ph) ph.remove();
 }
 function appendUserBubble(t, fileList, usedSkills, promptIndex = null, promptEntryId = '') {
@@ -16215,7 +16593,7 @@ function appendUserBubble(t, fileList, usedSkills, promptIndex = null, promptEnt
   }
   if (tags.length) chips = '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px">' + tags.join('') + '</div>';
   d.innerHTML = `<div class="msg-body">${chips}${esc(t)}</div>`;
-  chatEl.appendChild(d); scrollBottom();
+  getContextChatEl().appendChild(d); scrollBottom();
 }
 function appendAssistantBubble() {
   clearChatPlaceholder();
@@ -16234,7 +16612,7 @@ function appendAssistantBubble() {
     `<button class="msg-action-btn" data-role="dislike" onclick="msgAction(this,'dislike')" title="Poor response"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg></button>`;
   main.appendChild(b); main.appendChild(acts);
   d.appendChild(reasoningEl); d.appendChild(main);
-  chatEl.appendChild(d); scrollBottom();
+  getContextChatEl().appendChild(d); scrollBottom();
   return { msgEl: d, textEl: b, reasoningEl };
 }
 function setToolCardCollapsed(card, collapsed) {
@@ -16295,6 +16673,7 @@ function onToolToggleButtonClick(btn, ev) {
   toggleToolCard(btn.closest('.tool-card'));
 }
 async function renderMediaResultCards(container, { kind, mode, prompt, model, paths = [] }, options = {}) {
+  const run = currentRunContext;
   const showMeta = options.showMeta !== false;
   container.dataset.mediaResult = JSON.stringify({ kind, mode, prompt, model, paths });
   container.innerHTML = `${showMeta ? `<div class="media-result-meta">${esc(model || '')} · ${esc(String(mode || '').replace('_', '→'))}</div><div style="margin-bottom:8px">${esc(t('media.saved') || 'Saved generated media:')}</div>` : ''}<div class="media-result-grid"></div>`;
@@ -16303,6 +16682,7 @@ async function renderMediaResultCards(container, { kind, mode, prompt, model, pa
     const node = vfsResolve(path);
     if (!node?.binary) continue;
     const bytes = await vfsGetBinary(path);
+    if (run) activateConversationRun(run);
     if (!bytes) continue;
     const ext = path.split('.').pop().toLowerCase();
     const url = URL.createObjectURL(new Blob([bytes], { type: getMimeType(ext) }));
@@ -16443,7 +16823,7 @@ function appendFilePreview(parentEl, content, filePath) {
   parentEl.appendChild(wrap);
   scrollBottom();
 }
-function appendSystemMsg(t) { const d = document.createElement('div'); d.className = 'msg msg-system'; d.innerHTML = `<div class="msg-body">${esc(t)}</div>`; chatEl.appendChild(d); scrollBottom(); }
+function appendSystemMsg(t) { const d = document.createElement('div'); d.className = 'msg msg-system'; d.innerHTML = `<div class="msg-body">${esc(t)}</div>`; getContextChatEl().appendChild(d); scrollBottom(); }
 function appendErrorBubble(t, meta = {}) {
   const { msgEl, textEl, reasoningEl } = appendAssistantBubble();
   msgEl.classList.add('msg-error');
@@ -16601,7 +16981,8 @@ function msgAction(btn, role) {
       }
     }
   } else if (role === 'regen') {
-    if (isGenerating) return;
+    ensureVisibleConversationStateActive();
+    if (isConversationRunning(visibleConvId || activeConvId)) return;
     const promptEntryId = msgEl?.dataset.promptEntryId || '';
     const tokenBase = Number(msgEl?.dataset.tokenBase);
     const loopBase = Number(msgEl?.dataset.loopBase);
@@ -17006,6 +17387,7 @@ function _extractMediaItems(data, kind) {
   return out;
 }
 async function saveGeneratedMediaItems(items, kind) {
+  const run = currentRunContext;
   const paths = [];
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   for (let i = 0; i < items.length; i++) {
@@ -17021,12 +17403,14 @@ async function saveGeneratedMediaItems(items, kind) {
       bytes = parsed.bytes; mime = parsed.mime;
     } else if (item.url) {
       const fetched = await _fetchMediaBytes(item.url);
+      if (run) activateConversationRun(run);
       bytes = fetched.bytes; mime = fetched.mime;
     }
     if (!bytes) continue;
     const ext = _mediaExtFromMime(mime, kind === 'video' ? 'mp4' : 'png');
     const path = `/generations/${kind}-${stamp}-${i + 1}.${ext}`;
     await vfsWriteBinary(path, bytes, true);
+    if (run) activateConversationRun(run);
     paths.push(path);
   }
   renderFileTree();
@@ -17082,6 +17466,7 @@ async function pollMediaGeneration(job, mode, provider = ACTIVE_PROVIDER) {
   throw new Error('Video generation timed out');
 }
 async function runMediaGeneration(mode, prompt, filePaths, options = {}) {
+  const run = currentRunContext;
   const kind = isVideoGenerationMode(mode) ? 'video' : 'image';
   const mediaCfg = resolveMediaModelConfig(kind, options.model || '');
   const model = mediaCfg.model;
@@ -17094,7 +17479,8 @@ async function runMediaGeneration(mode, prompt, filePaths, options = {}) {
   let resp, errorText = '';
   for (const variant of getMediaGenerationBodyVariants(mode)) {
     const body = buildMediaGenerationBody(mode, prompt, model, images, variant);
-    resp = await fetchWithRetry(url, { method: 'POST', headers: getProviderAuthHeaders({ json: true, respectServiceWorker: false, provider: mediaProvider }), body: JSON.stringify(body), signal: abortCtrl?.signal });
+    resp = await fetchWithRetry(url, { method: 'POST', headers: getProviderAuthHeaders({ json: true, respectServiceWorker: false, provider: mediaProvider }), body: JSON.stringify(body), signal: getCurrentRunAbortSignal() });
+    if (run) activateConversationRun(run);
     if (resp.ok) break;
     errorText = await resp.text();
     const msg = errorText.toLowerCase();
@@ -17102,7 +17488,11 @@ async function runMediaGeneration(mode, prompt, filePaths, options = {}) {
   }
   if (!resp.ok) throw new Error(`API Error (${resp.status}): ${errorText.slice(0, 300)}`);
   let data = await resp.json();
-  if (kind === 'video' && !_extractMediaItems(data, kind).length) data = await pollMediaGeneration(data, mode, mediaProvider);
+  if (run) activateConversationRun(run);
+  if (kind === 'video' && !_extractMediaItems(data, kind).length) {
+    data = await pollMediaGeneration(data, mode, mediaProvider);
+    if (run) activateConversationRun(run);
+  }
   const items = _extractMediaItems(data, kind);
   if (!items.length) throw new Error('No generated media returned.');
   const paths = await saveGeneratedMediaItems(items, kind);
@@ -17142,23 +17532,62 @@ async function toolGenerateVideo(input) {
   return mediaToolResultText(result);
 }
 async function mediaGenerationLoop(text, filePaths, usedSkills) {
-  isGenerating = true; abortCtrl = new AbortController(); updateButtons(); setStatus('running', t('media.generating'));
+  ensureVisibleConversationStateActive();
+  const convId = visibleConvId || activeConvId;
+  if (!convId || isConversationRunning(convId)) return;
+  const run = {
+    convId,
+    active: true,
+    kind: 'media',
+    abortCtrl: new AbortController(),
+    startedAt: Date.now(),
+    statusType: 'running',
+    statusText: t('media.generating'),
+    state: captureConversationState(chatEl.innerHTML),
+    chatContainer: null,
+    chatHTML: chatEl.innerHTML,
+    cancelled: false,
+    deleted: false
+  };
+  conversationRuns.set(convId, run);
+  activateConversationRun(run);
+  isGenerating = true; abortCtrl = run.abortCtrl; updateButtons(); renderConvList(); setStatus('running', t('media.generating'));
   const mode = MEDIA_MODE;
   const mediaDisplay = getMediaPromptDisplay(mode, text);
   const userEntry = appendSessionEntry('message', { role: 'user', content: mediaDisplay, usedSkillNames: (usedSkills || []).map(sk => sk.name).filter(Boolean) });
   rebuildConversation();
   appendUserBubble(mediaDisplay, filePaths, usedSkills, findConversationIndexByEntryId(userEntry.id), userEntry.id);
   const titleText = getUserTextFromContent(mediaDisplay) || text;
-  if (conversation.filter(m => m.role === 'user').length === 1 && activeConvId && titleText) {
-    scheduleConversationTitleGeneration(activeConvId, titleText);
+  if (conversation.filter(m => m.role === 'user').length === 1 && convId && titleText) {
+    scheduleConversationTitleGeneration(convId, titleText);
   }
   try {
     const result = await runMediaGeneration(mode, text, filePaths);
+    activateConversationRun(run);
     await appendMediaGenerationBubble(result);
   } catch (e) {
+    activateConversationRun(run);
     appendErrorBubble(`Error: ${e.message}`, { userText: text, promptEntryId: userEntry.id });
   }
-  isGenerating = false; abortCtrl = null; updateButtons(); setStatus('ready', t('status.ready')); updateMemoryUI(); saveCurrentConv(true);
+  activateConversationRun(run);
+  isGenerating = false; abortCtrl = null;
+  run.active = false;
+  run.finishedAt = Date.now();
+  snapshotConversationRunState(run);
+  if (!run.deleted) await saveConversationState(convId, run.state, { andRenderList: true });
+  conversationRuns.delete(convId);
+  if (visibleConvId === convId) {
+    applyConversationState(run.state);
+    activeConvId = convId;
+    visibleConversationState = run.state;
+  } else {
+    ensureVisibleConversationStateActive();
+  }
+  currentRunContext = null;
+  syncLegacyRunFlags(); updateButtons();
+  const visibleRun = getActiveConversationRun();
+  setStatus(visibleRun?.active ? 'running' : 'ready', visibleRun?.active ? (visibleRun.statusText || t('status.streaming')) : t('status.ready'));
+  updateMemoryUI();
 }
 
 async function buildUserMessageContent(text, filePaths, usedSkills) {
@@ -17204,9 +17633,11 @@ async function buildUserMessageContent(text, filePaths, usedSkills) {
 
 // Send with attached files and /skill
 async function handleSend() {
+  ensureVisibleConversationStateActive();
   const inp = document.getElementById('userInput');
   const text = inp.value.trim();
-  if ((!text && !attachedFiles.length) || isGenerating) return;
+  const convId = visibleConvId || activeConvId;
+  if ((!text && !attachedFiles.length) || isConversationRunning(convId)) return;
   inp.value = '';
   autoResize(inp);
   hideAtDropdown();
@@ -17224,12 +17655,20 @@ async function handleSend() {
 
 function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }
 function updateButtons() {
+  syncLegacyRunFlags();
   const btn = document.getElementById('sendBtn');
-  if (isGenerating) { btn.innerHTML = '\u25A0'; btn.classList.add('stop'); btn.onclick = () => { if (ralphRun?.active) ralphRun.cancelled = true; if (abortCtrl) abortCtrl.abort(); }; }
+  const run = getActiveConversationRun();
+  if (run?.active) { btn.innerHTML = '\u25A0'; btn.classList.add('stop'); btn.onclick = () => { if (run.state?.ralphRun?.active) run.state.ralphRun.cancelled = true; stopConversationRun(run.convId); }; }
   else { btn.innerHTML = '\u25B6'; btn.classList.remove('stop'); btn.onclick = handleSend; }
-  document.getElementById('userInput').disabled = isGenerating;
+  document.getElementById('userInput').disabled = !!run?.active;
 }
 function setStatus(type, text) {
+  if (currentRunContext && !isRunVisible(currentRunContext)) {
+    currentRunContext.statusType = type;
+    currentRunContext.statusText = text;
+    renderConvList();
+    return;
+  }
   document.getElementById('statusText').textContent = text;
   const d = document.getElementById('statusDot');
   d.classList.toggle('running', type === 'running');
