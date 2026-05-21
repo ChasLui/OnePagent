@@ -17312,7 +17312,7 @@ function showAtDropdown(query) {
       const sizeStr = f.size < 1024 ? f.size + 'B' : (f.size / 1024).toFixed(1) + 'K';
       const icon = f.binary ? 'i:paperclip' : getFileIcon(f.name);
       const already = attachedFiles.includes(f.path) ? ' style="opacity:0.4"' : '';
-      return `<div class="at-item${i === 0 ? ' selected' : ''}" data-path="${esc(f.path)}" onclick="atSelect('${esc(f.path)}')"${already}><span class="at-icon">${icon}</span><span class="at-path">${esc(f.path)}</span><span class="at-size">${sizeStr}</span></div>`;
+      return `<div class="at-item${i === 0 ? ' selected' : ''}" data-path="${esc(f.path)}" onclick="atSelect('${esc(f.path)}')"${already}><span class="at-icon">${iconHtml(icon)}</span><span class="at-path">${esc(f.path)}</span><span class="at-size">${sizeStr}</span></div>`;
     }).join('');
   dd.classList.add('show');
   atActive = true;
