@@ -4518,6 +4518,7 @@ const ANTHROPIC_PROMPT_CACHE_ENABLED = true;
 const ANTHROPIC_PROMPT_CACHE_CONTROL = { type: 'ephemeral' };
 const memRecallPromptCache = new Map();
 const microCompactCache = new Map();
+const compactedToolUseIds = new Set();
 function stableStringHash(value) {
   const text = String(value || '');
   let h = 2166136261;
@@ -12843,32 +12844,13 @@ function getEnabledToolsAnthropic() { return allToolsAnthropic.filter(t => !disa
 function getEnabledToolsOpenAI() { return allToolsOpenAI.filter(t => !disabledTools.has(t.function.name)); }
 
 function rebuildToolDefs(headId = activeEntryId, options = {}) {
-  const _remote = isRemoteSandbox();
-  allToolsAnthropic = BASE_TOOLS_ANTHROPIC.filter(t => {
-    // TodoWrite and ExitPlanMode are plan-mode-only tools
-    if (t.name === 'TodoWrite' || t.name === 'ExitPlanMode') return planMode;
-    if (t.name === 'GenerateImage') return hasConfiguredDefaultMediaModel('image');
-    if (t.name === 'GenerateVideo') return hasConfiguredDefaultMediaModel('video');
-    // Swarm tools only when Agent Swarm is enabled
-    if (t.name === 'SwarmSpawn' || t.name === 'SwarmStatus' || t.name === 'SwarmAbort' || t.name === 'SwarmHandoff') return !!swarmSettings.enabled;
-    if (t.name === 'RoleManager') return !!swarmSettings.enabled && !!swarmSettings.roleManagerEnabled;
-    if (t.name === 'bb_write' || t.name === 'bb_read' || t.name === 'bb_list' || t.name === 'bb_post_task' || t.name === 'bb_claim') return !!swarmSettings.enabled;
-    // Bash only exposed when a real shell is available (remote sandbox).
-    if (t.name === 'Bash') return _remote;
-    // In remote mode the sandbox is a full Linux container — there is no need
-    // for the in-browser code runners. Everything goes through Bash.
-    if (_remote && (t.name === 'PythonExec' || t.name === 'JSExec' || t.name === 'NodeExec' || t.name === 'VfsToPyodide' || t.name === 'PyodideToVfs')) return false;
-    return true;
-  }).map(t => {
-    if (!_remote) return t;
-    if (t.name === 'Bash') return { ...t, description: 'Execute a real shell command in the remote Daytona sandbox (Linux container). Working directory defaults to /home/daytona. The VFS is uploaded before the run; after the run, only files under /home/daytona/outputs are pulled back into VFS /outputs. Put final result files in /home/daytona/outputs so the user can inspect or download them. Use this for everything: shell utilities, python3 / pip, node / npm, file ops, network calls, etc. Pip/npm installs and /home/daytona changes persist across calls within the same conversation.', input_schema: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to execute.' } }, required: ['command'] } };
-    const remoteFileToolNote = ' Remote sandbox mode: this tool targets the Daytona sandbox first. You may pass either VFS-style /foo.js or sandbox absolute /home/daytona/foo.js; both refer to /home/daytona/foo.js. Do not prefix an already-sandbox path again. Successful reads/writes/edits update the VFS shadow path (/foo.js). After Bash returns, only /home/daytona/outputs is automatically synced back to VFS /outputs.';
-    const remoteSearchToolNote = ' Remote sandbox mode: this searches the browser VFS shadow, not a live Daytona filesystem scan. Use Bash for live sandbox find/grep. Final result files should be written under /home/daytona/outputs in Bash or /outputs via VFS tools.';
-    if (t.name === 'Read' || t.name === 'Write' || t.name === 'Edit') return { ...t, description: (t.description || '') + remoteFileToolNote };
-    if (t.name === 'Glob' || t.name === 'Grep') return { ...t, description: (t.description || '') + remoteSearchToolNote };
-    return t;
-  });
-  if (pyodideInstance) allToolsAnthropic.push(...PYODIDE_NATIVE_TOOLS);
+  // Static built-in tools (BASE + PYODIDE) are kept in a fixed order regardless of
+  // current mode (planMode / sandbox / swarm / media model / pyodide load / memory
+  // enablement) so the tools-array byte sequence stays stable for prompt caching.
+  // Runtime gating happens inside each tool handler (executeTool returns an Error
+  // string when the tool is unavailable). The toolsGrid UI applies its own visibility
+  // filter so the user only sees cards for currently-usable tools.
+  allToolsAnthropic = [...BASE_TOOLS_ANTHROPIC, ...PYODIDE_NATIVE_TOOLS];
   skillToolHandlers = {};
   for (const st of getAllSkillTools()) {
     if (st.handler) skillToolHandlers[st.name] = st.handler;
@@ -12880,23 +12862,36 @@ function rebuildToolDefs(headId = activeEntryId, options = {}) {
   for (const mt of mcpTools) {
     allToolsAnthropic.push({ name: mt.name, description: mt.description || '', input_schema: mt.parameters || { type: 'object', properties: {}, required: [] } });
   }
-  // Add long-term memory tools when enabled
-  if (memIsEnabled()) {
-    allToolsAnthropic.push(
-      { name: 'memory_save', description: 'Save a durable fact to long-term memory. Use sparingly and only for information that should survive across conversations: user preferences, project constraints, decisions made, entity relationships, or environment facts the user stated. Do NOT save ephemeral task details, debugging steps, or public knowledge. Each fact must be self-contained, stated in third-person ("User prefers X"), <= 220 chars. If this fact REPLACES an existing memory (user changed their mind, old fact is stale), pass supersedes_ids with the ids of the memories to retire.', input_schema: { type: 'object', properties: { content: { type: 'string', description: 'The fact to remember, stated plainly and in third-person.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Lowercase topic / entity tags for retrieval (e.g. ["python","testing"]).' }, type: { type: 'string', enum: ['fact','preference','event','skill','note'], description: 'Classification. Defaults to fact.' }, supersedes_ids: { type: 'array', items: { type: 'string' }, description: 'Optional. Ids of existing memories that this new memory replaces; they will be retired.' } }, required: ['content'] } },
-      { name: 'memory_search', description: 'Search long-term memory for facts relevant to a query. Returns matching entries with their ids, time labels, tags, and relevance scores. Retired (superseded) memories are excluded unless include_superseded is true.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Free-text query describing what to recall.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Optional: restrict results to entries with these tags.' }, limit: { type: 'integer', description: 'Max results (1-25). Default 8.' }, include_superseded: { type: 'boolean', description: 'If true, include retired memories in the results.' } }, required: ['query'] } },
-      { name: 'memory_update', description: 'Update fields of an existing memory in place. Use when a stored fact needs a clarification or tag fix. Fails if no memory has that id. Bumps updatedAt.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'Target memory id (e.g. mem_abc123).' }, content: { type: 'string', description: 'New content, 4-400 chars.' }, tags: { type: 'array', items: { type: 'string' } }, type: { type: 'string', enum: ['fact','preference','event','skill','note'] }, pinned: { type: 'boolean' } }, required: ['id'] } },
-      { name: 'memory_forget', description: 'Retire a memory so it no longer surfaces in recall or search. Soft delete — the record is kept but marked superseded. Use when the user explicitly tells you to forget something, or when a memory is demonstrably wrong with no obvious replacement.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'Target memory id.' }, reason: { type: 'string', description: 'Optional short tag indicating why (e.g. "stale", "incorrect", "user-request").' } }, required: ['id'] } }
-    );
-  }
+  // Long-term memory tools are always exposed; toolMemory* handlers enforce memIsEnabled() at runtime.
+  allToolsAnthropic.push(
+    { name: 'memory_save', description: 'Save a durable fact to long-term memory. Use sparingly and only for information that should survive across conversations: user preferences, project constraints, decisions made, entity relationships, or environment facts the user stated. Do NOT save ephemeral task details, debugging steps, or public knowledge. Each fact must be self-contained, stated in third-person ("User prefers X"), <= 220 chars. If this fact REPLACES an existing memory (user changed their mind, old fact is stale), pass supersedes_ids with the ids of the memories to retire.', input_schema: { type: 'object', properties: { content: { type: 'string', description: 'The fact to remember, stated plainly and in third-person.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Lowercase topic / entity tags for retrieval (e.g. ["python","testing"]).' }, type: { type: 'string', enum: ['fact','preference','event','skill','note'], description: 'Classification. Defaults to fact.' }, supersedes_ids: { type: 'array', items: { type: 'string' }, description: 'Optional. Ids of existing memories that this new memory replaces; they will be retired.' } }, required: ['content'] } },
+    { name: 'memory_search', description: 'Search long-term memory for facts relevant to a query. Returns matching entries with their ids, time labels, tags, and relevance scores. Retired (superseded) memories are excluded unless include_superseded is true.', input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Free-text query describing what to recall.' }, tags: { type: 'array', items: { type: 'string' }, description: 'Optional: restrict results to entries with these tags.' }, limit: { type: 'integer', description: 'Max results (1-25). Default 8.' }, include_superseded: { type: 'boolean', description: 'If true, include retired memories in the results.' } }, required: ['query'] } },
+    { name: 'memory_update', description: 'Update fields of an existing memory in place. Use when a stored fact needs a clarification or tag fix. Fails if no memory has that id. Bumps updatedAt.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'Target memory id (e.g. mem_abc123).' }, content: { type: 'string', description: 'New content, 4-400 chars.' }, tags: { type: 'array', items: { type: 'string' } }, type: { type: 'string', enum: ['fact','preference','event','skill','note'] }, pinned: { type: 'boolean' } }, required: ['id'] } },
+    { name: 'memory_forget', description: 'Retire a memory so it no longer surfaces in recall or search. Soft delete — the record is kept but marked superseded. Use when the user explicitly tells you to forget something, or when a memory is demonstrably wrong with no obvious replacement.', input_schema: { type: 'object', properties: { id: { type: 'string', description: 'Target memory id.' }, reason: { type: 'string', description: 'Optional short tag indicating why (e.g. "stale", "incorrect", "user-request").' } }, required: ['id'] } }
+  );
   allToolsOpenAI = allToolsAnthropic.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
   if (!options.skipRender) renderToolsGrid();
+}
+
+function isToolVisibleInUi(toolName) {
+  if (toolName === 'TodoWrite' || toolName === 'ExitPlanMode') return planMode;
+  if (toolName === 'GenerateImage') return hasConfiguredDefaultMediaModel('image');
+  if (toolName === 'GenerateVideo') return hasConfiguredDefaultMediaModel('video');
+  if (toolName === 'SwarmSpawn' || toolName === 'SwarmStatus' || toolName === 'SwarmAbort' || toolName === 'SwarmHandoff') return !!swarmSettings.enabled;
+  if (toolName === 'RoleManager') return !!swarmSettings.enabled && !!swarmSettings.roleManagerEnabled;
+  if (toolName === 'bb_write' || toolName === 'bb_read' || toolName === 'bb_list' || toolName === 'bb_post_task' || toolName === 'bb_claim') return !!swarmSettings.enabled;
+  const _remote = isRemoteSandbox();
+  if (toolName === 'Bash') return _remote;
+  if (_remote && (toolName === 'PythonExec' || toolName === 'JSExec' || toolName === 'NodeExec')) return false;
+  if (toolName === 'VfsToPyodide' || toolName === 'PyodideToVfs') return !_remote && !!pyodideInstance;
+  if (toolName === 'memory_save' || toolName === 'memory_search' || toolName === 'memory_update' || toolName === 'memory_forget') return memIsEnabled();
+  return true;
 }
 
 function renderToolsGrid() {
   const icons = { Read: 'i:book', Write: 'i:file-pen', Edit: 'i:pencil', Glob: 'i:search', Grep: 'i:search', Bash: 'i:terminal', PythonExec: 'i:terminal', VfsToPyodide: 'i:terminal', PyodideToVfs: 'i:terminal', JSExec: 'i:terminal', NodeExec: 'i:terminal', WebSearch: 'i:globe', Fetch: 'i:antenna', RunSubAgent: 'i:bolt', SwarmSpawn: 'i:bolt', SwarmStatus: 'i:bolt', SwarmAbort: 'i:x', SwarmHandoff: 'i:bolt', bb_write: 'i:pencil', bb_read: 'i:book', bb_list: 'i:file-text', bb_post_task: 'i:plus', bb_claim: 'i:check', GenerateImage: 'i:image', GenerateVideo: 'i:film', SkillManager: 'i:wrench', AskUser: 'i:message-circle' };
   const el = document.getElementById('toolsGrid');
-  el.innerHTML = allToolsAnthropic.map(t => {
+  el.innerHTML = allToolsAnthropic.filter(t => isToolVisibleInUi(t.name)).map(t => {
     const ic = icons[t.name] || 'i:wrench';
     const enabled = !disabledTools.has(t.name);
     return `<div class="tg-card ${enabled ? 'enabled' : ''}" data-tool="${esc(t.name)}" title="${esc(t.description)}" onclick="toggleToolEnabled('${esc(t.name)}')" style="${enabled ? '' : 'opacity:0.4'}"><div class="tg-badge"></div><div class="tg-icon">${iconHtml(ic)}</div><div class="tg-name">${esc(t.name)}</div></div>`;
@@ -12931,8 +12926,12 @@ async function executeTool(name, input) {
       case 'PythonExec':
         if (isRemoteSandbox()) return 'Error: PythonExec is disabled when the remote sandbox is active. Use Bash instead — e.g. `python3 -c "..."` or `python3 /home/daytona/script.py`. Pip installs and /home/daytona changes persist across Bash calls.';
         return await toolPythonExec(input);
-      case 'VfsToPyodide': return pyodideInstance ? await toolVfsToPyodide(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
-      case 'PyodideToVfs': return pyodideInstance ? await toolPyodideToVfs(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
+      case 'VfsToPyodide':
+        if (isRemoteSandbox()) return 'Error: VfsToPyodide is disabled when the remote sandbox is active. Use Bash to move files within /home/daytona instead.';
+        return pyodideInstance ? await toolVfsToPyodide(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
+      case 'PyodideToVfs':
+        if (isRemoteSandbox()) return 'Error: PyodideToVfs is disabled when the remote sandbox is active. Write final files under /home/daytona/outputs via Bash and they will be synced to VFS /outputs.';
+        return pyodideInstance ? await toolPyodideToVfs(input) : 'Error: Pyodide is not loaded yet. Run PythonExec first to initialize Pyodide.';
       case 'JSExec':
         if (isRemoteSandbox()) return 'Error: JSExec is disabled when the remote sandbox is active. Use Bash with `node` instead — e.g. `node -e "..."` or `node /home/daytona/script.js`. Npm installs and /home/daytona changes persist across Bash calls.';
         return await toolJSExec(input);
@@ -15506,17 +15505,26 @@ function microCompactProjectedMessages(messages, options = {}) {
   const maxChars = options.maxChars || 1800;
   return messages.map((message, index) => {
     const ageFromEnd = messages.length - index - 1;
-    if (ageFromEnd < minAgeFromEnd || !Array.isArray(message?.content)) return message;
+    if (!Array.isArray(message?.content)) return message;
     let changed = false;
     const content = message.content.map(block => {
       if (block?.type !== 'tool_result') return block;
       const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '');
       if (text.startsWith('[Tool output compacted]')) return block;
-      const tokens = estimateTokenCountFromText(text);
-      if (tokens < minTokens && !/^data:/i.test(text) && !/^[A-Za-z0-9+/=]{4000,}$/.test(text.slice(0, 5000))) return block;
+      // Once a tool_result has been compacted, keep it compacted forever — even if
+      // ageFromEnd would now say "leave it raw". This prevents the byte sequence of
+      // historical messages from shifting as the conversation grows, which is required
+      // for messages-level prompt cache stability.
+      const alreadyCompacted = block.tool_use_id && compactedToolUseIds.has(block.tool_use_id);
+      if (!alreadyCompacted) {
+        if (ageFromEnd < minAgeFromEnd) return block;
+        const tokens = estimateTokenCountFromText(text);
+        if (tokens < minTokens && !/^data:/i.test(text) && !/^[A-Za-z0-9+/=]{4000,}$/.test(text.slice(0, 5000))) return block;
+      }
       const cacheKey = `${block.tool_use_id || ''}:${stableStringHash(text)}:${maxChars}`;
       let compacted = microCompactCache.get(cacheKey);
       if (!compacted) compacted = rememberBoundedMapValue(microCompactCache, cacheKey, compactLargeToolResultContent(block.content, { maxChars }), 200);
+      if (block.tool_use_id) compactedToolUseIds.add(block.tool_use_id);
       changed = true;
       return { ...block, content: compacted };
     });
@@ -15570,8 +15578,8 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   rebuildToolDefs(headId, { skipRender: !!options.skipToolRender });
   const anthropicTools = getEnabledToolsAnthropic();
   const openaiTools = getEnabledToolsOpenAI();
-  const stableSystemPrompt = contextEditor + activeSkillMetadata;
-  const volatileSystemPrompt = triggeredSkillPrompts + mediaToolPrompt + pyodideNativePrompt + planPrompt + ralphPrompt + sandboxPrompt + memPrompt + beijingTimePrompt;
+  const stableSystemPrompt = contextEditor;
+  const volatileSystemPrompt = activeSkillMetadata + triggeredSkillPrompts + mediaToolPrompt + pyodideNativePrompt + planPrompt + ralphPrompt + sandboxPrompt + memPrompt + beijingTimePrompt;
   const systemPrompt = stableSystemPrompt + volatileSystemPrompt;
   return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, mediaToolPrompt, pyodideNativePrompt, planPrompt, ralphPrompt, sandboxPrompt, memPrompt, beijingTimePrompt, stableSystemPrompt, volatileSystemPrompt, systemPrompt, anthropicTools, openaiTools, headId };
 }
@@ -15605,14 +15613,35 @@ function looksLikeCacheControlCompatError(status, text) {
   const s = String(text || '').toLowerCase();
   return status === 400 && (s.includes('cache_control') || s.includes('cache control') || (s.includes('system') && (s.includes('array') || s.includes('text block') || s.includes('object'))));
 }
+function applyAnthropicMessagesCacheBreakpoint(messages) {
+  // Place one cache_control breakpoint on the final content block of the second-to-last
+  // message. The combined effect with the stable-system-prompt breakpoint: on every new
+  // user turn, tools + system + all prior assistant/user messages are cached, and only
+  // the freshly added last message and the assistant's pending output are uncached.
+  // If the server doesn't honor cache_control on messages, downgradeAnthropicCompatBody
+  // strips it on retry.
+  if (!Array.isArray(messages) || messages.length < 2) return messages;
+  const targetIdx = messages.length - 2;
+  return messages.map((m, i) => {
+    if (i !== targetIdx) return m;
+    let content = m.content;
+    if (typeof content === 'string') content = [{ type: 'text', text: content }];
+    if (!Array.isArray(content) || !content.length) return m;
+    const last = content[content.length - 1];
+    if (!last || typeof last !== 'object') return m;
+    const newLast = { ...last, cache_control: { ...ANTHROPIC_PROMPT_CACHE_CONTROL } };
+    return { ...m, content: [...content.slice(0, -1), newLast] };
+  });
+}
 function assembleRequestBodyFromParts(parts, options = {}) {
   const requestModel = String(options.model || API_MODEL || '').trim() || API_MODEL;
   if (PROVIDER === 'anthropic_compat') {
+    const messages = parts.projectedMessages.map(m => m.role === 'user' ? { ...m, content: buildAnthropicUserContent(m.content) } : m);
     const body = {
       model: requestModel,
       max_tokens: ANTHROPIC_MAX_TOKENS,
       system: buildAnthropicSystemForCache(parts),
-      messages: parts.projectedMessages.map(m => m.role === 'user' ? { ...m, content: buildAnthropicUserContent(m.content) } : m),
+      messages: ANTHROPIC_PROMPT_CACHE_ENABLED ? applyAnthropicMessagesCacheBreakpoint(messages) : messages,
       tools: parts.anthropicTools
     };
     return applyThinkingToRequestBody(body, 'anthropic');
