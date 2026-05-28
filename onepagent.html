@@ -15558,9 +15558,8 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   const contextEditor = document.getElementById('contextEditor')?.value || '';
   const activeSkillMetadata = getActiveSkillMetadataPrompts();
   const triggeredSkillPrompts = getTriggeredSkillPrompts(headId);
-  const runtimeReminder = getBeijingTimeStr();
-  const beijingTime = runtimeReminder;
-  const projectedMessages = appendRuntimeReminderMessage(projectedMessagesBase, runtimeReminder);
+  const projectedMessages = projectedMessagesBase;
+  const beijingTimePrompt = getBeijingTimePrompt();
   const mediaToolPrompt = getMediaToolPrompt();
   const pyodideNativePrompt = getPyodideNativeToolPrompt();
   const planPrompt = planMode ? '\n\n[PLAN MODE ACTIVE]\nYou must not execute write-class tools (Write, Edit, Bash, PythonExec, VfsToPyodide, PyodideToVfs, JSExec, NodeExec, MCP tools, or SkillManager write actions). You may use read-only tools (Read, Glob, Grep, WebSearch, Fetch), SkillManager list/inspect, and TodoWrite to investigate. When your plan is complete, call the ExitPlanMode tool with the full plan as Markdown and wait for the user\'s approval. Do not proceed with execution until ExitPlanMode returns an approval message.' : '';
@@ -15572,9 +15571,9 @@ async function collectRequestContextParts(messages = buildConversationFromEntrie
   const anthropicTools = getEnabledToolsAnthropic();
   const openaiTools = getEnabledToolsOpenAI();
   const stableSystemPrompt = contextEditor + activeSkillMetadata;
-  const volatileSystemPrompt = triggeredSkillPrompts + mediaToolPrompt + pyodideNativePrompt + planPrompt + ralphPrompt + sandboxPrompt + memPrompt;
+  const volatileSystemPrompt = triggeredSkillPrompts + mediaToolPrompt + pyodideNativePrompt + planPrompt + ralphPrompt + sandboxPrompt + memPrompt + beijingTimePrompt;
   const systemPrompt = stableSystemPrompt + volatileSystemPrompt;
-  return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, beijingTime, runtimeReminder, mediaToolPrompt, pyodideNativePrompt, planPrompt, ralphPrompt, sandboxPrompt, memPrompt, stableSystemPrompt, volatileSystemPrompt, systemPrompt, anthropicTools, openaiTools, headId };
+  return { projectedMessages, contextEditor, activeSkillMetadata, triggeredSkillPrompts, mediaToolPrompt, pyodideNativePrompt, planPrompt, ralphPrompt, sandboxPrompt, memPrompt, beijingTimePrompt, stableSystemPrompt, volatileSystemPrompt, systemPrompt, anthropicTools, openaiTools, headId };
 }
 function buildAnthropicSystemForCache(parts) {
   const blocks = [];
@@ -15904,7 +15903,7 @@ function flashTool(name) { const c = document.querySelector(`.tg-card[data-tool=
 // ═══════════════════════════════════════════════════════════════════
 // MESSAGE CONSTRUCTION (multi-provider)
 // ═══════════════════════════════════════════════════════════════════
-function getBeijingTimeStr() {
+function getBeijingTimePrompt() {
   const now = new Date();
   const bjStr = now.toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -15913,14 +15912,7 @@ function getBeijingTimeStr() {
     hour: '2-digit', minute: '2-digit',
     hour12: false
   });
-  return `<system-reminder>\n当前北京时间 (UTC+8): ${bjStr}\n</system-reminder>`;
-}
-
-function appendRuntimeReminderMessage(messages, reminderText) {
-  if (!reminderText) return messages;
-  const out = Array.isArray(messages) ? messages.map(m => ({ ...m })) : [];
-  out.push({ role: 'user', content: [{ type: 'text', text: reminderText }] });
-  return out;
+  return `\n\n[CURRENT TIME]\n当前北京时间 (UTC+8): ${bjStr}`;
 }
 
 function bytesToBase64(bytes) {
