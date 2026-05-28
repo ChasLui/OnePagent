@@ -13767,6 +13767,26 @@ async function _copyVfsFileToRemote(convId, paths) {
   return true;
 }
 
+// Push the local VFS version of one file into the sandbox iff its fingerprint
+// differs from what was last uploaded. Used by Read/Edit Remote to guarantee
+// the sandbox is not older than the VFS at read time — otherwise a stale
+// sandbox copy would silently overwrite a fresher VFS edit (e.g. the user
+// just typed into the editor) when the result is shadowed back.
+async function _pushVfsToSandboxIfDirty(convId, paths) {
+  const sess = window._daytonaSessions?.[convId];
+  if (!sess || !paths?.vfsPath || paths.vfsPath === '/') return false;
+  if (!sess.syncedIn) sess.syncedIn = new Map();
+  const node = vfsResolve(paths.vfsPath);
+  if (!node || node.type !== 'file') return false;
+  if (sess.syncedIn.get(paths.vfsPath) === _vfsFingerprint(node)) return false;
+  try {
+    return await _copyVfsFileToRemote(convId, paths);
+  } catch (e) {
+    console.warn('pre-push to sandbox skipped', paths.vfsPath, e?.message || e);
+    return false;
+  }
+}
+
 async function _shadowRemoteBytes(convId, paths, bytes) {
   if (!paths.vfsPath || paths.vfsPath === '/') return;
   if (_looksLikeText(bytes)) {
@@ -13785,6 +13805,8 @@ async function toolReadRemote(input) {
   const fp = input?.file_path || '';
   if (!String(fp).trim()) return 'Error: file_path is required.';
   const paths = _remoteToolFilePaths(fp);
+  await _pushVfsToSandboxIfDirty(convId, paths);
+  if (run) activateConversationRun(run);
   try {
     const bytes = await daytonaClient.readFile(convId, paths.remotePath, true);
     if (run) activateConversationRun(run);
@@ -13831,6 +13853,8 @@ async function toolEditRemote(input) {
   const oldStr = String(input?.old_str ?? '');
   const newStr = String(input?.new_str ?? '');
   if (!oldStr) return 'Error: old_str is required.';
+  await _pushVfsToSandboxIfDirty(convId, paths);
+  if (run) activateConversationRun(run);
   let content = '';
   try {
     const bytes = await daytonaClient.readFile(convId, paths.remotePath, true);
