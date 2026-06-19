@@ -3901,7 +3901,12 @@ const daytonaClient = {
   async listChanged(convId, sinceMs) {
     const sandboxId = await this.ensureSandbox(convId);
     const cfg = getSandboxConfig();
-    const cmd = "mkdir -p " + DAYTONA_OUTPUTS_REMOTE_PREFIX + " && find " + DAYTONA_OUTPUTS_REMOTE_PREFIX + " -type f -printf '%T@ %s %p\\n' 2>/dev/null | head -n 2000";
+    // When sinceMs is provided, filter server-side with `find -newermt` so we
+    // only list files modified after the cutoff instead of re-listing the
+    // whole outputs tree on every Bash call. The client-side mtime check
+    // below stays as a safety net. `-newermt @<epoch>` uses epoch seconds.
+    const newer = (sinceMs && sinceMs > 0) ? ` -newermt @${Math.floor(sinceMs / 1000)}` : '';
+    const cmd = "mkdir -p " + DAYTONA_OUTPUTS_REMOTE_PREFIX + " && find " + DAYTONA_OUTPUTS_REMOTE_PREFIX + newer + " -type f -printf '%T@ %s %p\\n' 2>/dev/null | head -n 2000";
     const r = await _daytonaToolboxFetch(cfg, sandboxId, '/process/execute',
       { method: 'POST', body: JSON.stringify({ command: cmd, cwd: DAYTONA_WORKSPACE, timeout: 30 }) });
     const text = (r && (r.result ?? r.stdout ?? '')) || '';
@@ -3997,18 +4002,45 @@ function _walkAllVfsFiles() {
 // Push every VFS file into DAYTONA_WORKSPACE, skipping anything whose fingerprint
 // matches the last successful upload for this sandbox.
 async function syncVfsToRemote(convId, _input) {
+  // Ensure the sandbox exists BEFORE walking/uploading. Previously this bailed
+  // when no session existed, while ensureSandbox only ran inside exec — so the
+  // FIRST remote exec in a conversation ran in an empty sandbox with none of
+  // the VFS files synced. syncIn must not mask the real error here: if sandbox
+  // creation fails, let exec surface it.
+  try { await daytonaClient.ensureSandbox(convId); }
+  catch (e) { /* fall through; exec will report the underlying failure */ }
   const sess = window._daytonaSessions[convId];
   if (!sess) return { pushed: 0, skipped: 0, bytesPushed: 0 };
   if (!sess.syncedIn) sess.syncedIn = new Map();
   const allFiles = _walkAllVfsFiles();
-  let pushed = 0, skipped = 0, bytesPushed = 0;
   const presentPaths = new Set();
+  // Phase 1: classify each present file and collect parent dirs for the ones
+  // that actually need uploading (fingerprint changed). mkdir only runs when
+  // there is real work, avoiding a round-trip on every no-op syncIn.
+  const uploadCandidates = [];
+  const dirsToCreate = new Set();
+  let skipped = 0;
   for (const { path, node } of allFiles) {
     if (_shouldSkipSyncPath(path)) continue;
     presentPaths.add(path);
-    if (pushed >= DAYTONA_SYNC_MAX_FILES || bytesPushed >= DAYTONA_SYNC_MAX_BYTES) break;
     const fp = _vfsFingerprint(node);
     if (sess.syncedIn.get(path) === fp) { skipped++; continue; }
+    uploadCandidates.push({ path, node, fp });
+    // /files/upload to a deep path whose parent dir doesn't exist in the
+    // sandbox fails and is silently swallowed below — collect parents and
+    // mkdir -p them first.
+    const parent = path.replace(/\/[^/]+$/, '');
+    if (parent && parent !== '/' && !dirsToCreate.has(parent)) dirsToCreate.add(parent);
+  }
+  if (dirsToCreate.size) {
+    try {
+      await daytonaClient.execShell(convId, 'mkdir -p -- ' + [...dirsToCreate].map(p => `'${(DAYTONA_WORKSPACE + p).replace(/'/g, "'\\''")}'`).join(' '));
+    } catch (e) { console.warn('syncIn mkdir failed:', e?.message || e); }
+  }
+  // Phase 2: upload the changed files, honoring cumulative caps.
+  let pushed = 0, bytesPushed = 0;
+  for (const { path, node, fp } of uploadCandidates) {
+    if (pushed >= DAYTONA_SYNC_MAX_FILES || bytesPushed >= DAYTONA_SYNC_MAX_BYTES) break;
     try {
       if (node.binary) {
         const bytes = await vfsGetBinary(path);
@@ -4018,7 +4050,9 @@ async function syncVfsToRemote(convId, _input) {
         bytesPushed += bytes.length;
       } else {
         const text = node.content || '';
-        const byteLen = text.length;
+        // Count UTF-8 bytes, not UTF-16 code units, so the MAX_BYTES cap
+        // matches what writeFile actually uploads for non-ASCII content.
+        const byteLen = new TextEncoder().encode(text).length;
         if (bytesPushed + byteLen > DAYTONA_SYNC_MAX_BYTES) continue;
         await daytonaClient.writeFile(convId, DAYTONA_WORKSPACE + path, text);
         bytesPushed += byteLen;
@@ -4028,22 +4062,39 @@ async function syncVfsToRemote(convId, _input) {
     } catch (e) { console.warn('syncIn skip', path, e?.message || e); }
   }
   // Drop fingerprints for paths that no longer exist locally so a re-created
-  // file later forces a fresh upload.
+  // file later forces a fresh upload, AND delete the stale copies from the
+  // sandbox so `ls` doesn't show ghost files that were removed in VFS.
+  const toDeleteRemote = [];
   for (const cached of [...sess.syncedIn.keys()]) {
-    if (!presentPaths.has(cached)) sess.syncedIn.delete(cached);
+    if (!presentPaths.has(cached)) {
+      sess.syncedIn.delete(cached);
+      if (!_shouldSkipSyncPath(cached) && cached !== '/') {
+        toDeleteRemote.push(DAYTONA_WORKSPACE + cached);
+      }
+    }
+  }
+  if (toDeleteRemote.length) {
+    try {
+      await daytonaClient.execShell(convId, 'rm -f -- ' + toDeleteRemote.map(p => `'${p.replace(/'/g, "'\\''")}'`).join(' '));
+    } catch (e) { console.warn('syncIn remote cleanup failed:', e?.message || e); }
   }
   return { pushed, skipped, bytesPushed };
 }
 
 // Pull only result files under /outputs from the sandbox workspace. Other
 // sandbox changes stay remote and are not mirrored back into the VFS.
-async function syncVfsFromRemote(convId, _sinceMs) {
+async function syncVfsFromRemote(convId, sinceMs) {
   const sess = window._daytonaSessions[convId];
   if (!sess) return { pulled: 0, skipped: 0 };
   if (!sess.syncedOut) sess.syncedOut = new Map();
   let entries;
-  try { entries = await daytonaClient.listChanged(convId, 0); }
+  try { entries = await daytonaClient.listChanged(convId, sinceMs || 0); }
   catch (e) { console.warn('listChanged failed:', e?.message || e); return { pulled: 0, skipped: 0 }; }
+  // Detect the silent truncation from `find ... | head -n 2000`: if we hit the
+  // cap, files beyond it are never pulled back, so surface a warning.
+  if (entries.length >= DAYTONA_SYNC_MAX_FILES) {
+    console.warn('syncOut: outputs listing hit DAYTONA_SYNC_MAX_FILES cap (' + DAYTONA_SYNC_MAX_FILES + '); some files may not be pulled back.');
+  }
   let pulled = 0, skipped = 0;
   const seen = new Set();
   for (const f of entries) {
