@@ -17433,6 +17433,8 @@ function isSkillsVfsPath(path) {
 }
 
 function showAtDropdown(query) {
+  // The @ file picker lists the visible conversation's files, not a background run's.
+  ensureVisibleConversationStateActive();
   const dd = document.getElementById('atDropdown');
   const all = getVfsFileList().filter(f => !isSkillsVfsPath(f.path));
   const q = query.toLowerCase();
