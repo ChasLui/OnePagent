@@ -6048,7 +6048,14 @@ async function ensurePyodide() {
     for (const [idx, pkg] of PYODIDE_MICROPIP_PRELOAD_PACKAGES.entries()) {
       const pct = 70 + Math.round((idx / totalPip) * 20);
       updatePyodideProgress(`Installing Python package ${idx + 1}/${totalPip}: ${pkg}...`, pct, initRun);
-      await pyodideInstance.runPythonAsync(`import micropip; await micropip.install("${pkg}")`);
+      // Optional preinstall — a PyPI/network failure here must not abort the whole
+      // runtime. Pyodide is already usable; the package can be installed on demand.
+      try {
+        await pyodideInstance.runPythonAsync(`import micropip; await micropip.install("${pkg}")`);
+      } catch (e) {
+        console.warn(`[pyodide] optional preinstall of "${pkg}" failed:`, e?.message || e);
+        updatePyodideProgress(`Skipped optional package ${pkg} (install on demand later).`, pct, initRun);
+      }
     }
     pyodideLoading = false;
     updatePyodideProgress('Python runtime ready (Pyodide).', 100, initRun);
