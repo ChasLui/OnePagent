@@ -6015,44 +6015,48 @@ let pyodideProgressEl = null;
 const PYODIDE_PRELOAD_PACKAGES = ['micropip', 'numpy', 'pandas', 'lxml'];
 const PYODIDE_MICROPIP_PRELOAD_PACKAGES = ['python-pptx'];
 
-function updatePyodideProgress(text, pct) {
+function updatePyodideProgress(text, pct, run) {
   if (!pyodideProgressEl || !pyodideProgressEl.isConnected) {
     pyodideProgressEl = document.createElement('div');
     pyodideProgressEl.className = 'msg msg-system';
     pyodideProgressEl.innerHTML = '<div class="msg-body"></div>';
-    // Route to the owning run's container (visible chat only when this run is
-    // the visible one) instead of always writing the visible chatEl.
-    getContextChatEl(currentRunContext).appendChild(pyodideProgressEl);
+    // Route to the run that initiated the load (passed explicitly). Loading is a
+    // long async sequence, so the live currentRunContext drifts to other runs
+    // between progress callbacks — using it here is what made the bar bleed.
+    getContextChatEl(run).appendChild(pyodideProgressEl);
   }
   const body = pyodideProgressEl.querySelector('.msg-body');
   const safePct = Math.max(0, Math.min(100, Number(pct) || 0));
   body.innerHTML = `${esc(text)}<div class="install-progress show" style="margin:8px 0 0"><div class="bar"><div class="fill" style="width:${safePct}%"></div></div></div>`;
-  scrollBottom();
+  scrollBottom(false, run);
 }
 
 async function ensurePyodide() {
+  // Capture the run that triggered this load up front; all progress updates route
+  // to it so the bar stays in the initiating conversation across the long awaits.
+  const initRun = currentRunContext;
   if (pyodideInstance) return pyodideInstance;
-  if (pyodideLoading) { updatePyodideProgress('Python runtime is already loading...', 10); while (pyodideLoading) await new Promise(r => setTimeout(r, 100)); return pyodideInstance; }
+  if (pyodideLoading) { updatePyodideProgress('Python runtime is already loading...', 10, initRun); while (pyodideLoading) await new Promise(r => setTimeout(r, 100)); return pyodideInstance; }
   pyodideLoading = true;
-  updatePyodideProgress('Loading Python runtime (Pyodide WASM)...', 5);
+  updatePyodideProgress('Loading Python runtime (Pyodide WASM)...', 5, initRun);
   try {
-    updatePyodideProgress('Downloading and initializing Pyodide...', 15);
+    updatePyodideProgress('Downloading and initializing Pyodide...', 15, initRun);
     pyodideInstance = await loadPyodide({ stdout: msg => console.log('[pyodide]', msg), stderr: msg => console.warn('[pyodide]', msg) });
-    updatePyodideProgress(`Loading packages: ${PYODIDE_PRELOAD_PACKAGES.join(', ')}...`, 35);
-    await pyodideInstance.loadPackage(PYODIDE_PRELOAD_PACKAGES, msg => updatePyodideProgress(String(msg || 'Loading Pyodide packages...'), 55));
+    updatePyodideProgress(`Loading packages: ${PYODIDE_PRELOAD_PACKAGES.join(', ')}...`, 35, initRun);
+    await pyodideInstance.loadPackage(PYODIDE_PRELOAD_PACKAGES, msg => updatePyodideProgress(String(msg || 'Loading Pyodide packages...'), 55, initRun));
     const totalPip = PYODIDE_MICROPIP_PRELOAD_PACKAGES.length || 1;
     for (const [idx, pkg] of PYODIDE_MICROPIP_PRELOAD_PACKAGES.entries()) {
       const pct = 70 + Math.round((idx / totalPip) * 20);
-      updatePyodideProgress(`Installing Python package ${idx + 1}/${totalPip}: ${pkg}...`, pct);
+      updatePyodideProgress(`Installing Python package ${idx + 1}/${totalPip}: ${pkg}...`, pct, initRun);
       await pyodideInstance.runPythonAsync(`import micropip; await micropip.install("${pkg}")`);
     }
     pyodideLoading = false;
-    updatePyodideProgress('Python runtime ready (Pyodide).', 100);
+    updatePyodideProgress('Python runtime ready (Pyodide).', 100, initRun);
     if (typeof rebuildToolDefs === 'function') rebuildToolDefs();
     return pyodideInstance;
   } catch (e) {
     pyodideLoading = false;
-    updatePyodideProgress('Failed to load Pyodide: ' + e.message, 100);
+    updatePyodideProgress('Failed to load Pyodide: ' + e.message, 100, initRun);
     throw new Error('Failed to load Pyodide: ' + e.message);
   }
 }
