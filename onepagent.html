@@ -4185,18 +4185,29 @@ function populateModelDropdown(models) {
 }
 
 // ── Streaming render throttle ───────────────────────────────────
-let _renderTimer = null, _renderPending = null;
+// Keyed per target element so concurrent conversation streams don't overwrite
+// each other's pending render (a single global slot let run B's chunk drop
+// run A's pending text).
+const _renderPendingMap = new Map(); // el -> { text, timer }
 function renderMdThrottled(el, text) {
-  _renderPending = { el, text };
-  if (_renderTimer) return;
-  _renderTimer = setTimeout(() => {
-    _renderTimer = null;
-    if (_renderPending) { renderMd(_renderPending.el, _renderPending.text); _renderPending = null; }
+  let p = _renderPendingMap.get(el);
+  if (!p) { p = { text, timer: null }; _renderPendingMap.set(el, p); }
+  p.text = text;
+  if (p.timer) return;
+  p.timer = setTimeout(() => {
+    p.timer = null;
+    const cur = _renderPendingMap.get(el);
+    if (cur) { renderMd(el, cur.text); _renderPendingMap.delete(el); }
   }, 50);
 }
-function flushRender() {
-  if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
-  if (_renderPending) { renderMd(_renderPending.el, _renderPending.text); _renderPending = null; }
+function flushRender(el) {
+  if (el) {
+    const p = _renderPendingMap.get(el);
+    if (p) { if (p.timer) clearTimeout(p.timer); renderMd(el, p.text); _renderPendingMap.delete(el); }
+    return;
+  }
+  for (const [e, p] of _renderPendingMap) { if (p.timer) clearTimeout(p.timer); renderMd(e, p.text); }
+  _renderPendingMap.clear();
 }
 
 const DEFAULT_SYSTEM = `You are a powerful agentic AI coding assistant running in a browser-based virtual sandbox.
@@ -4757,9 +4768,15 @@ function ensureRunChatContainer(run) {
 function isRunVisible(run) {
   return !!(run && run.convId && run.convId === visibleConvId);
 }
-function getContextChatEl() {
-  if (currentRunContext && !isRunVisible(currentRunContext)) {
-    return ensureRunChatContainer(currentRunContext);
+function getContextChatEl(run) {
+  // Route by the run that OWNS the content (passed explicitly by the engine),
+  // not by the mutable global currentRunContext which can be null/stale while a
+  // background run renders — that fallback is what caused output to bleed into
+  // the visible conversation. Only fall back to currentRunContext for legacy
+  // UI callers that don't pass a run.
+  const ctx = run || currentRunContext;
+  if (ctx && !isRunVisible(ctx)) {
+    return ensureRunChatContainer(ctx);
   }
   return chatEl;
 }
@@ -6003,7 +6020,9 @@ function updatePyodideProgress(text, pct) {
     pyodideProgressEl = document.createElement('div');
     pyodideProgressEl.className = 'msg msg-system';
     pyodideProgressEl.innerHTML = '<div class="msg-body"></div>';
-    chatEl.appendChild(pyodideProgressEl);
+    // Route to the owning run's container (visible chat only when this run is
+    // the visible one) instead of always writing the visible chatEl.
+    getContextChatEl(currentRunContext).appendChild(pyodideProgressEl);
   }
   const body = pyodideProgressEl.querySelector('.msg-body');
   const safePct = Math.max(0, Math.min(100, Number(pct) || 0));
@@ -15862,8 +15881,9 @@ function renderContextBreakdown(snapshot = lastRequestContextSnapshot) {
   box.textContent = contextBreakdownExpanded ? `${summary}\n${detailLines.join('\n')}` : `${summary}  ▸`;
 }
 
-function logMemEntry(type, text) {
-  if (currentRunContext && !isRunVisible(currentRunContext)) return;
+function logMemEntry(type, text, run) {
+  const ctx = run || currentRunContext;
+  if (ctx && !isRunVisible(ctx)) return;
   const el = document.getElementById('memoryLog');
   const d = document.createElement('div');
   d.className = `mem-entry ${type}`;
@@ -15885,7 +15905,7 @@ async function checkAndCompact() {
   applyContextSnapshot(snapshot);
   renderContextSnapshotUI(snapshot);
   if (snapshot.fillRatio >= CONTEXT_AUTO_COMPACT_RATIO) {
-    appendSystemMsg(`Context approaching limit (${Math.round(snapshot.fillRatio * 100)}%). Auto-compacting...`);
+    appendSystemMsg(`Context approaching limit (${Math.round(snapshot.fillRatio * 100)}%). Auto-compacting...`, run);
     await compactMemory({ trigger: 'auto', snapshot });
     if (run) activateConversationRun(run);
   } else if (snapshot.fillRatio >= CONTEXT_WARNING_RATIO) {
@@ -15930,7 +15950,7 @@ async function compactMemory(options = {}) {
   rebuildConversation();
   if (conversation.length <= 6 || !activeEntryId || !sessionEntries.length) return;
   logMemEntry('compact', 'Compacting via LLM...');
-  appendSystemMsg('Summarizing conversation history via LLM...');
+  appendSystemMsg('Summarizing conversation history via LLM...', run);
   const chain = getEntryChain(activeEntryId);
   const messageEntries = chain.filter(entry => entry.type === 'message' || entry.type === 'tool_result');
   const keepBudget = Math.max(2000, Math.min(20000, Math.floor((currentMaxContextTokens || DEFAULT_MAX_CONTEXT_TOKENS) * 0.25)));
@@ -15998,7 +16018,7 @@ async function compactMemory(options = {}) {
   if (run) activateConversationRun(run);
   applyContextSnapshot(afterSnapshot);
   logMemEntry('compact', `Compacted ${toCompact.length} messages → summary; kept ${keptEntries.length}`);
-  appendSystemMsg(`Compacted ${toCompact.length} messages.`);
+  appendSystemMsg(`Compacted ${toCompact.length} messages.`, run);
   updateMemoryUI();
 }
 
@@ -16324,7 +16344,7 @@ async function agentLoop(userContent, displayText, fileList, usedSkills, options
   const submitCtx = await runHooks('on_user_submit', { text: userTextPre, files: fileList || [], usedSkills: usedSkillNames });
   activateConversationRun(run);
   if (submitCtx._blocked) {
-    appendSystemMsg(`Blocked by hook [${submitCtx._blocked.by}]: ${submitCtx._blocked.reason}`);
+    appendSystemMsg(`Blocked by hook [${submitCtx._blocked.by}]: ${submitCtx._blocked.reason}`, run);
     snapshotConversationRunState(run);
     run.active = false;
     conversationRuns.delete(convId);
@@ -16348,7 +16368,7 @@ async function agentLoop(userContent, displayText, fileList, usedSkills, options
   rebuildConversation();
   const promptIndex = findConversationIndexByEntryId(userEntry.id);
   const userText = getUserTextFromContent(userContent) || displayText || '';
-  appendUserBubble(displayText || userText, fileList, usedSkills, promptIndex, userEntry.id);
+  appendUserBubble(displayText || userText, fileList, usedSkills, promptIndex, userEntry.id, run);
   if (conversation.filter(m => m.role === 'user').length === 1 && convId && userText) {
     scheduleConversationTitleGeneration(convId, userText);
   }
@@ -16426,7 +16446,7 @@ function isNearBottom(el, threshold = 24) {
 async function _runAgentLoop(userText, options = {}) {
   const run = options.run || (options.convId ? conversationRuns.get(options.convId) : null);
   if (run) activateConversationRun(run);
-  isGenerating = isRunVisible(run); updateButtons(); setStatus('running', t('status.thinking'));
+  isGenerating = isRunVisible(run); updateButtons(); setStatus('running', t('status.thinking'), run);
   rebuildConversation();
   // Reset per-turn swarm accounting (workers from a prior turn don't carry budget over).
   if (swarmRunActive) endSwarmRun();
@@ -16438,7 +16458,7 @@ async function _runAgentLoop(userText, options = {}) {
   const ralphOptions = normalizeRalphOptions(options.ralph);
   if (ralphOptions.enabled) {
     ralphRun = { active: true, originalTask: userText, promptEntryId, iteration: 0, unlimited: ralphOptions.unlimited, maxIterations: ralphOptions.maxIterations, completionMarker: ralphOptions.completionMarker, cancelled: false, stopReason: '', seenSignatures: new Map() };
-    appendSystemMsg(`Ralph Loop started: max ${ralphRun.unlimited ? '∞' : ralphRun.maxIterations} iterations, marker "${ralphRun.completionMarker}".`);
+    appendSystemMsg(`Ralph Loop started: max ${ralphRun.unlimited ? '∞' : ralphRun.maxIterations} iterations, marker "${ralphRun.completionMarker}".`, run);
     renderRalphButton();
   }
   let stoppedBy = 'done';
@@ -16451,7 +16471,7 @@ async function _runAgentLoop(userText, options = {}) {
         const queued = run.pendingGuidance.splice(0);
         for (const g of queued) {
           const entry = appendSessionEntry('message', { role: 'user', content: g.text, guidance: true });
-          appendUserBubble(g.text, g.fileList || [], [], findConversationIndexByEntryId(entry.id), entry.id);
+          appendUserBubble(g.text, g.fileList || [], [], findConversationIndexByEntryId(entry.id), entry.id, run);
         }
         rebuildConversation();
         snapshotConversationRunState(run);
@@ -16472,7 +16492,7 @@ async function _runAgentLoop(userText, options = {}) {
         body.stream_options = { ...(body.stream_options || {}), include_usage: true };
       }
       // Show pending "thinking" bubble BEFORE fetch so users see immediate feedback.
-      const { msgEl, textEl, reasoningEl } = appendAssistantBubble();
+      const { msgEl, textEl, reasoningEl } = appendAssistantBubble(run);
       textEl.dataset.pending = '1';
       textEl.innerHTML = `<div class="thinking" aria-label="${t('thinking')}"><span></span><span></span><span></span></div>`;
       msgEl.dataset.userText = userText;
@@ -16488,7 +16508,7 @@ async function _runAgentLoop(userText, options = {}) {
       if (!resp.ok) {
         const errorText = await resp.text();
         if (isContextLengthError(resp.status, errorText) && !retriedAfterContextCompact) {
-          appendSystemMsg('Context length exceeded. Compacting context and retrying once...');
+          appendSystemMsg('Context length exceeded. Compacting context and retrying once...', run);
           await compactMemory({ trigger: 'context_error', snapshot: requestSnapshot });
           const retryMessages = buildConversationFromEntries();
           const retrySnapshot = await buildContextSnapshot(retryMessages, promptEntryId, { memoryRecallKey, run });
@@ -16500,11 +16520,11 @@ async function _runAgentLoop(userText, options = {}) {
           if (PROVIDER !== 'anthropic_compat') retryBody.stream_options = { ...(retryBody.stream_options || {}), include_usage: true };
           resp = await sendLLMRequestBody(retryBody, (run?.abortCtrl || abortCtrl).signal);
           if (run) activateConversationRun(run);
-          if (!resp.ok) { stoppedBy = 'error'; msgEl.remove(); appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); break; }
+          if (!resp.ok) { stoppedBy = 'error'; msgEl.remove(); appendErrorBubble(`API Error (${resp.status}): ${(await resp.text()).slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }, run); break; }
         } else {
           stoppedBy = 'error';
           msgEl.remove();
-          appendErrorBubble(`API Error (${resp.status}): ${errorText.slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase });
+          appendErrorBubble(`API Error (${resp.status}): ${errorText.slice(0, 300)}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }, run);
           break;
         }
       }
@@ -16512,10 +16532,10 @@ async function _runAgentLoop(userText, options = {}) {
       // Replace thinking dots with streaming cursor now that response is flowing.
       delete textEl.dataset.pending;
       textEl.innerHTML = '<span class="streaming-cursor"></span>';
-      setStatus('running', t('status.streaming'));
+      setStatus('running', t('status.streaming'), run);
       let fullText = '';
-      const onText = chunk => { if (run) activateConversationRun(run); fullText += chunk; renderMdThrottled(textEl, fullText); scrollBottom(); if (run) snapshotConversationRunState(run); };
-      const onReasoning = chunk => { if (run) activateConversationRun(run); appendReasoningChunk(reasoningEl, chunk); scrollBottom(); if (run) snapshotConversationRunState(run); };
+      const onText = chunk => { if (run) activateConversationRun(run); fullText += chunk; renderMdThrottled(textEl, fullText); scrollBottom(false, run); if (run) snapshotConversationRunState(run); };
+      const onReasoning = chunk => { if (run) activateConversationRun(run); appendReasoningChunk(reasoningEl, chunk); scrollBottom(false, run); if (run) snapshotConversationRunState(run); };
       // Live tool generation preview
       const _toolEls = []; // all live tool cards for cleanup
       const _toolMap = {}; // index -> { el, name, json }
@@ -16529,11 +16549,11 @@ async function _runAgentLoop(userText, options = {}) {
         const supportsCollapse = block.name === 'Write' || block.name === 'Edit' || block.name === 'PythonExec' || block.name === 'JSExec' || block.name === 'NodeExec';
         const summaryText = block.name === 'PythonExec' ? 'generating python code…' : block.name === 'JSExec' ? 'generating javascript code…' : block.name === 'NodeExec' ? 'generating node code…' : block.name === 'Write' ? 'generating file content…' : block.name === 'Edit' ? 'generating replacement content…' : 'generating…';
         el.innerHTML = `<div class="tool-header" onclick="toggleToolCard(this.parentElement)"><span class="tool-name">${esc(block.name)}</span><span class="tool-summary" style="color:var(--accent-orange)">${summaryText}</span>${supportsCollapse ? '<button class="tool-toggle-btn" onclick="onToolToggleButtonClick(this,event)">Collapse</button>' : ''}<span class="tool-arrow open">\u25BC</span><span class="streaming-cursor" style="margin-left:4px"></span></div><div class="tool-body show"><div class="tool-output"><pre class="tool-pre" style="max-height:300px;overflow-y:auto"></pre></div></div>`;
-        msgEl.appendChild(el); scrollBottom();
+        msgEl.appendChild(el); scrollBottom(false, run);
         entry.el = el;
         _toolMap[toolIndex] = entry;
         _toolEls.push(el);
-        setStatus('running', `${block.name}...`);
+        setStatus('running', `${block.name}...`, run);
       };
       const onToolDelta = (idx, partial) => {
         if (run) activateConversationRun(run);
@@ -16552,7 +16572,7 @@ async function _runAgentLoop(userText, options = {}) {
             pre.textContent = _extractToolContent(tool.name, tool.json);
             if (shouldStickToolScroll) pre.scrollTop = pre.scrollHeight;
           }
-          scrollBottom();
+          scrollBottom(false, run);
         }, 80);
       };
       let result;
@@ -16601,7 +16621,7 @@ async function _runAgentLoop(userText, options = {}) {
         }
       }
       // Flush any pending throttled render
-      flushRender();
+      flushRender(textEl);
       if (fullText) {
         renderMd(textEl, fullText);
         const fb = msgEl.querySelector('[data-role="fmt"]');
@@ -16639,15 +16659,15 @@ async function _runAgentLoop(userText, options = {}) {
           if (run) activateConversationRun(run);
           if (preCtx._blocked) {
             const blocked = `Error: blocked by hook [${preCtx._blocked.by}]: ${preCtx._blocked.reason}`;
-            appendToolCard(msgEl, tu, blocked, true, liveEntry?.el || null);
+            appendToolCard(msgEl, tu, blocked, true, liveEntry?.el || null, run);
             return PROVIDER === 'anthropic_compat' ? { type: 'tool_result', tool_use_id: tu.id, content: blocked, is_error: true } : { type: 'tool_result', tool_use_id: tu.id, content: blocked };
           }
           if (preCtx.input && typeof preCtx.input === 'object') effectiveInput = preCtx.input;
           const mediaProgressEl = (tu.name === 'GenerateImage' || tu.name === 'GenerateVideo') ? createMediaRenderProgress(tu.name === 'GenerateVideo' ? 'video' : 'image') : null;
           if (mediaProgressEl) {
             msgEl.insertBefore(mediaProgressEl, liveEntry?.el?.nextSibling || null);
-            setStatus('running', t('media.generating'));
-            scrollBottom();
+            setStatus('running', t('media.generating'), run);
+            scrollBottom(false, run);
           }
           let out;
           try {
@@ -16669,10 +16689,10 @@ async function _runAgentLoop(userText, options = {}) {
           const isMediaTool = tu.name === 'GenerateImage' || tu.name === 'GenerateVideo';
           if (isMediaTool && !isErr) {
             if (liveEntry?.el?.isConnected) liveEntry.el.remove();
-            if (!(await appendMediaResultOnly(msgEl, out))) appendToolCard(msgEl, tu, out, isErr, liveEntry?.el || null);
+            if (!(await appendMediaResultOnly(msgEl, out))) appendToolCard(msgEl, tu, out, isErr, liveEntry?.el || null, run);
             if (run) activateConversationRun(run);
           } else {
-            appendToolCard(msgEl, tu, out, isErr, liveEntry?.el || null);
+            appendToolCard(msgEl, tu, out, isErr, liveEntry?.el || null, run);
           }
           return PROVIDER === 'anthropic_compat' ? { type: 'tool_result', tool_use_id: tu.id, content: out, is_error: isErr || undefined } : { type: 'tool_result', tool_use_id: tu.id, content: out };
         };
@@ -16713,8 +16733,8 @@ async function _runAgentLoop(userText, options = {}) {
         const postToolSnapshot = await buildContextSnapshot(undefined, undefined, { run });
         if (run) activateConversationRun(run);
         applyContextSnapshot(postToolSnapshot);
-        setStatus('running', t('status.processing'));
-        scrollBottom();
+        setStatus('running', t('status.processing'), run);
+        scrollBottom(false, run);
       }
       if (!result.stream_error && result.stop_reason !== 'tool_use' && ralphRun?.active) {
         ralphDecision = shouldContinueRalphLoop({ result, fullText, todos, ralphRun });
@@ -16736,15 +16756,15 @@ async function _runAgentLoop(userText, options = {}) {
         if (!ralphDecision) ralphDecision = shouldContinueRalphLoop({ result, fullText, todos, ralphRun });
         if (!ralphDecision.continue) {
           ralphRun.stopReason = ralphDecision.reason;
-          appendSystemMsg(`Ralph Loop stopped: ${ralphDecision.reason}.`);
+          appendSystemMsg(`Ralph Loop stopped: ${ralphDecision.reason}.`, run);
           break;
         }
         ralphRun.iteration++;
         appendRalphContinuationMessage({ ralphRun, lastAssistantText: fullText });
         renderRalphButton();
         updateMemoryUI();
-        setStatus('running', `Ralph ${ralphRun.iteration}/${ralphRun.unlimited ? '∞' : ralphRun.maxIterations}`);
-        scrollBottom();
+        setStatus('running', `Ralph ${ralphRun.iteration}/${ralphRun.unlimited ? '∞' : ralphRun.maxIterations}`, run);
+        scrollBottom(false, run);
         continue;
       }
       if (run?.pendingGuidance?.length) continue;
@@ -16753,7 +16773,7 @@ async function _runAgentLoop(userText, options = {}) {
   } catch (e) {
     if (run) activateConversationRun(run);
     if (e.name === 'AbortError') stoppedBy = 'abort';
-    else { stoppedBy = 'error'; appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }); }
+    else { stoppedBy = 'error'; appendErrorBubble(`Error: ${e.message}`, { userText, promptIndex, promptEntryId, tokenBase, loopBase }, run); }
   }
   finally {
     if (run) activateConversationRun(run);
@@ -16794,16 +16814,16 @@ async function _runAgentLoop(userText, options = {}) {
 const chatEl = document.getElementById('chatMessages');
 let _autoScrollChat = true;
 chatEl.addEventListener('scroll', () => { _autoScrollChat = isNearBottom(chatEl, 48); });
-function scrollBottom(force = false) {
-  const target = getContextChatEl();
+function scrollBottom(force = false, run) {
+  const target = getContextChatEl(run);
   if (target === chatEl && (force || _autoScrollChat)) chatEl.scrollTop = chatEl.scrollHeight;
 }
-function clearChatPlaceholder() {
-  const ph = getContextChatEl()?.querySelector('.msg-placeholder');
+function clearChatPlaceholder(run) {
+  const ph = getContextChatEl(run)?.querySelector('.msg-placeholder');
   if (ph) ph.remove();
 }
-function appendUserBubble(t, fileList, usedSkills, promptIndex = null, promptEntryId = '') {
-  clearChatPlaceholder();
+function appendUserBubble(t, fileList, usedSkills, promptIndex = null, promptEntryId = '', run) {
+  clearChatPlaceholder(run);
   const d = document.createElement('div'); d.className = 'msg msg-user';
   if (Number.isInteger(promptIndex)) d.dataset.promptIndex = String(promptIndex);
   if (promptEntryId) d.dataset.promptEntryId = promptEntryId;
@@ -16830,10 +16850,10 @@ function appendUserBubble(t, fileList, usedSkills, promptIndex = null, promptEnt
       `<button class="msg-action-btn" data-role="regen" onclick="msgAction(this,'regen')" title="Regenerate"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>` +
     `</div>`;
   d.innerHTML = `<div class="msg-user-main"><div class="msg-body">${chips}${esc(t)}</div>${actions}</div>`;
-  getContextChatEl().appendChild(d); scrollBottom();
+  getContextChatEl(run).appendChild(d); scrollBottom(false, run);
 }
-function appendAssistantBubble() {
-  clearChatPlaceholder();
+function appendAssistantBubble(run) {
+  clearChatPlaceholder(run);
   const d = document.createElement('div'); d.className = 'msg msg-assistant';
   const reasoningEl = document.createElement('div'); reasoningEl.className = 'reasoning-card'; reasoningEl.dataset.role = 'assistant-reasoning'; reasoningEl.style.display = 'none';
   reasoningEl.innerHTML = `<div class="reasoning-header" onclick="toggleReasoningCard(this.parentElement)"><span class="reasoning-title">Thinking</span><span class="reasoning-summary"></span><span class="tool-arrow open">\u25BC</span></div><div class="reasoning-body show"></div>`;
@@ -16849,7 +16869,7 @@ function appendAssistantBubble() {
     `<button class="msg-action-btn" data-role="dislike" onclick="msgAction(this,'dislike')" title="Poor response"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg></button>`;
   main.appendChild(b); main.appendChild(acts);
   d.appendChild(reasoningEl); d.appendChild(main);
-  getContextChatEl().appendChild(d); scrollBottom();
+  getContextChatEl(run).appendChild(d); scrollBottom(false, run);
   return { msgEl: d, textEl: b, reasoningEl };
 }
 function setToolCardCollapsed(card, collapsed) {
@@ -16932,8 +16952,8 @@ async function renderMediaResultCards(container, { kind, mode, prompt, model, pa
     grid.appendChild(card);
   }
 }
-async function appendMediaGenerationBubble({ mode, prompt, model, paths = [], error = '' }) {
-  const { msgEl, textEl, reasoningEl } = appendAssistantBubble();
+async function appendMediaGenerationBubble({ mode, prompt, model, paths = [], error = '' }, run) {
+  const { msgEl, textEl, reasoningEl } = appendAssistantBubble(run);
   if (reasoningEl) reasoningEl.remove();
   if (error) {
     textEl.innerHTML = `<div style="color:var(--accent-red)">${esc(error)}</div>`;
@@ -16998,7 +17018,7 @@ async function appendMediaResultOnly(msgEl, out) {
   await renderMediaResultCards(body, mediaResult, { showMeta: false });
   return true;
 }
-function appendToolCard(msgEl, tu, out, isErr, existingEl = null) {
+function appendToolCard(msgEl, tu, out, isErr, existingEl = null, run) {
   const c = existingEl || document.createElement('div');
   c.className = 'tool-card' + (isErr ? ' error' : '');
   const sum = { Read: tu.input.file_path, Write: tu.input.file_path, Edit: tu.input.file_path, Glob: tu.input.pattern, Grep: tu.input.pattern, Bash: tu.input.command, PythonExec: (tu.input.code||'').slice(0,60), JSExec: (tu.input.code||'').slice(0,60), NodeExec: tu.input.script_path || (tu.input.code||'').slice(0,60), RunSubAgent: tu.input.task, GenerateImage: tu.input.prompt, GenerateVideo: tu.input.prompt, AskUser: tu.input.prompt }[tu.name] || '';
@@ -17020,7 +17040,7 @@ function appendToolCard(msgEl, tu, out, isErr, existingEl = null) {
     const ext = fp.split('.').pop().toLowerCase();
     if (ext === 'html' || ext === 'htm' || ext === 'md' || ext === 'markdown') {
       const node = vfsResolve(fp);
-      if (node && node.type === 'file' && node.content) appendFilePreview(msgEl, node.content, fp);
+      if (node && node.type === 'file' && node.content) appendFilePreview(msgEl, node.content, fp, run);
     }
   }
   return c;
@@ -17034,7 +17054,7 @@ function getFilePreviewType(fp) {
   return null;
 }
 
-function appendFilePreview(parentEl, content, filePath) {
+function appendFilePreview(parentEl, content, filePath, run) {
   const type = getFilePreviewType(filePath);
   if (!type) return;
   // Deduplicate: skip if a preview card for this path already exists in the message
@@ -17059,11 +17079,11 @@ function appendFilePreview(parentEl, content, filePath) {
     <button class="html-preview-open" style="border-color:${borderColor};color:${borderColor}" onclick="event.stopPropagation();openPreviewModal('${esc(filePath)}',null,'${type}')">&#x25B6; Preview</button>
   </div>`;
   parentEl.appendChild(wrap);
-  scrollBottom();
+  scrollBottom(false, run);
 }
-function appendSystemMsg(t) { const d = document.createElement('div'); d.className = 'msg msg-system'; d.innerHTML = `<div class="msg-body">${esc(t)}</div>`; getContextChatEl().appendChild(d); scrollBottom(); if (currentRunContext) snapshotConversationRunState(currentRunContext); }
-function appendErrorBubble(t, meta = {}) {
-  const { msgEl, textEl, reasoningEl } = appendAssistantBubble();
+function appendSystemMsg(t, run) { const d = document.createElement('div'); d.className = 'msg msg-system'; d.innerHTML = `<div class="msg-body">${esc(t)}</div>`; getContextChatEl(run).appendChild(d); scrollBottom(false, run); const ctx = run || currentRunContext; if (ctx) snapshotConversationRunState(ctx); }
+function appendErrorBubble(t, meta = {}, run) {
+  const { msgEl, textEl, reasoningEl } = appendAssistantBubble(run);
   msgEl.classList.add('msg-error');
   if (meta.userText) msgEl.dataset.userText = meta.userText;
   if (Number.isInteger(meta.promptIndex)) msgEl.dataset.promptIndex = String(meta.promptIndex);
@@ -17077,7 +17097,7 @@ function appendErrorBubble(t, meta = {}) {
   textEl.querySelector('.streaming-cursor')?.remove();
   const fmtBtn = msgEl.querySelector('[data-role="fmt"]');
   if (fmtBtn) fmtBtn.style.display = 'none';
-  scrollBottom();
+  scrollBottom(false, run);
   return msgEl;
 }
 function detectFormat(t) {
@@ -17820,13 +17840,13 @@ async function mediaGenerationLoop(text, filePaths, usedSkills) {
   };
   conversationRuns.set(convId, run);
   activateConversationRun(run);
-  isGenerating = true; abortCtrl = run.abortCtrl; updateButtons(); renderConvList(); setStatus('running', t('media.generating'));
+  isGenerating = true; abortCtrl = run.abortCtrl; updateButtons(); renderConvList(); setStatus('running', t('media.generating'), run);
   const mode = MEDIA_MODE;
   const mediaDisplay = getMediaPromptDisplay(mode, text);
   const userEntry = appendSessionEntry('message', { role: 'user', content: mediaDisplay, usedSkillNames: (usedSkills || []).map(sk => sk.name).filter(Boolean) });
   rebuildConversation();
   snapshotConversationRunState(run);
-  appendUserBubble(mediaDisplay, filePaths, usedSkills, findConversationIndexByEntryId(userEntry.id), userEntry.id);
+  appendUserBubble(mediaDisplay, filePaths, usedSkills, findConversationIndexByEntryId(userEntry.id), userEntry.id, run);
   snapshotConversationRunState(run);
   const titleText = getUserTextFromContent(mediaDisplay) || text;
   if (conversation.filter(m => m.role === 'user').length === 1 && convId && titleText) {
@@ -17836,11 +17856,11 @@ async function mediaGenerationLoop(text, filePaths, usedSkills) {
   try {
     const result = await runMediaGeneration(mode, text, filePaths);
     activateConversationRun(run);
-    await appendMediaGenerationBubble(result);
+    await appendMediaGenerationBubble(result, run);
   } catch (e) {
     activateConversationRun(run);
     mediaOutcome = e.name === 'AbortError' ? 'abort' : 'error';
-    appendErrorBubble(`Error: ${e.message}`, { userText: text, promptEntryId: userEntry.id });
+    appendErrorBubble(`Error: ${e.message}`, { userText: text, promptEntryId: userEntry.id }, run);
   }
   activateConversationRun(run);
   isGenerating = false; abortCtrl = null;
@@ -17970,10 +17990,13 @@ function updateButtons() {
     btn.onclick = handleSend;
   }
 }
-function setStatus(type, text) {
-  if (currentRunContext && !isRunVisible(currentRunContext)) {
-    currentRunContext.statusType = type;
-    currentRunContext.statusText = text;
+function setStatus(type, text, run) {
+  // Route by the owning run when provided; a background run must update its own
+  // status (and the conv list), never the visible status bar.
+  const ctx = run || currentRunContext;
+  if (ctx && !isRunVisible(ctx)) {
+    ctx.statusType = type;
+    ctx.statusText = text;
     renderConvList();
     return;
   }
