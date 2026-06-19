@@ -14422,6 +14422,7 @@ function feToggleSelect(ev, path) {
 }
 function feClearSelection() { feSelected.clear(); renderFileTree(); }
 function feDeleteSelected() {
+  ensureVisibleConversationStateActive();
   if (!feSelected.size) return;
   if (!confirm(t('fe.deleteSelectedConfirm') !== 'fe.deleteSelectedConfirm' ? t('fe.deleteSelectedConfirm').replace('{n}', feSelected.size) : `Delete ${feSelected.size} selected item(s)?`)) return;
   for (const sp of [...feSelected]) { vfsDelete(sp); }
@@ -14440,6 +14441,7 @@ function _feUpdateSelectBar() {
   count.textContent = String(feSelected.size);
 }
 async function feDownloadSelectedZip() {
+  ensureVisibleConversationStateActive();
   if (!feSelected.size) { alert(t('fe.zipEmpty')); return; }
   // Resolve to list of files with their archive paths.
   // For a selected directory /foo, include everything beneath it at "foo/..." in the zip.
@@ -14628,6 +14630,7 @@ document.addEventListener('contextmenu', (e) => { if (!e.target.closest('.fe-ite
 
 // File operations
 function feDeleteItem(path) {
+  ensureVisibleConversationStateActive();
   const name = path.split('/').pop();
   if (!confirm(`Delete "${name}"?`)) return;
   vfsDelete(path);
@@ -14635,6 +14638,7 @@ function feDeleteItem(path) {
 }
 
 function feRename(path) {
+  ensureVisibleConversationStateActive();
   const oldName = path.split('/').pop();
   const el = document.querySelector(`.fe-item[data-path="${CSS.escape(path)}"] .name`);
   if (!el) { const name = prompt('Rename to:', oldName); if (name && name !== oldName) feDoRename(path, name); return; }
@@ -14653,6 +14657,7 @@ function feRename(path) {
 }
 
 async function feDoRename(oldPath, newName) {
+  ensureVisibleConversationStateActive();
   const parts = oldPath.split('/');
   parts.pop();
   const newPath = parts.join('/') + '/' + newName;
@@ -14669,6 +14674,7 @@ async function feDoRename(oldPath, newName) {
 }
 
 async function feDuplicate(path) {
+  ensureVisibleConversationStateActive();
   const node = vfsResolve(path);
   if (!node || node.type !== 'file') return;
   const ext = path.lastIndexOf('.');
@@ -14681,6 +14687,7 @@ async function feDuplicate(path) {
 }
 
 async function feDownloadItem(path) {
+  ensureVisibleConversationStateActive();
   const node = vfsResolve(path);
   if (!node) return;
   if (node.type === 'file') {
@@ -14719,6 +14726,7 @@ async function feDownloadItem(path) {
 }
 
 function feEditFile(path) {
+  ensureVisibleConversationStateActive();
   const node = vfsResolve(path);
   if (!node || node.type !== 'file' || node.binary) { openFileViewer(path); return; }
   currentViewFile = path;
@@ -14730,6 +14738,7 @@ function feEditFile(path) {
 }
 
 function feSaveEdit() {
+  ensureVisibleConversationStateActive();
   if (!currentViewFile) return;
   const area = document.getElementById('feEditArea');
   if (!area) return;
@@ -14738,10 +14747,12 @@ function feSaveEdit() {
 }
 
 function feNewFileIn(dirPath) {
+  ensureVisibleConversationStateActive();
   const name = prompt('File name:', 'untitled.txt');
   if (name) vfsWrite(dirPath + '/' + name, '');
 }
 function feNewFolderIn(dirPath) {
+  ensureVisibleConversationStateActive();
   const name = prompt('Folder name:', 'new-folder');
   if (name) { vfsMkdir(dirPath + '/' + name); renderFileTree(); }
 }
@@ -14768,6 +14779,9 @@ function getMimeType(ext) {
 function isVideoExt(ext) { return ['mp4','webm','mov','avi','mkv'].includes(String(ext || '').toLowerCase()); }
 
 async function openFileViewer(path) {
+  // A background run may have left the global vfs/cwd pointed at its own
+  // conversation; make sure file reads resolve against the visible one.
+  ensureVisibleConversationStateActive();
   path = normPath(path);
   const node = vfsResolve(path);
   if (!node || node.type !== 'file') return;
@@ -15292,6 +15306,8 @@ async function exportConversationPdf(title) {
 }
 async function downloadAll(format = 'markdown') {
   closeExportMenu();
+  // Export the visible conversation, not whatever a background run left active.
+  ensureVisibleConversationStateActive();
   if (!conversation.length) { alert(t('export.noConversation')); return; }
   const title = getExportSafeTitle();
   if (format === 'pdf') { await exportConversationPdf(title); return; }
@@ -17379,6 +17395,8 @@ async function attachInputFile(file) {
   attachFile(path);
 }
 async function attachInputFiles(files) {
+  // Attachments must land in the visible conversation's vfs, not a background run's.
+  ensureVisibleConversationStateActive();
   const list = Array.from(files || []).filter(Boolean);
   for (const file of list) await attachInputFile(file);
 }
