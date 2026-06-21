@@ -3437,9 +3437,8 @@ const MODEL_CONTEXTS = { ...(((ACTIVE_PROVIDER && ACTIVE_PROVIDER.model_contexts
 const MODEL_REASONING_CONTENT = { ...normalizeReasoningContentModelsMap((ACTIVE_PROVIDER && ACTIVE_PROVIDER.reasoning_content_models) || CFG.reasoning_content_models || {}) };
 let currentMaxContextTokens = DEFAULT_MAX_CONTEXT_TOKENS;
 
-// API keys — fetched at init from /config endpoint, stored in closure
+// API credentials are loaded from local settings/provider profiles and used by direct browser fetches.
 let _keys = null;
-let _swReady = false;
 
 function getMaxContextTokensForModel(model) {
   const configured = Number(MODEL_CONTEXTS[model]);
@@ -3607,10 +3606,6 @@ document.getElementById('providerSelect').addEventListener('change', e => {
   Object.keys(MODEL_REASONING_CONTENT).forEach(k => delete MODEL_REASONING_CONTENT[k]);
   Object.assign(MODEL_REASONING_CONTENT, _keys.reasoning_content_models || {});
   applyModelContextLimit();
-  // refresh SW config
-  if (_swReady && navigator.serviceWorker?.controller) {
-    try { navigator.serviceWorker.controller.postMessage({ type: 'SET_CONFIG', api_key: _keys.api_key, tavily_api_key: _keys.tavily_api_key, provider: PROVIDER, api_endpoint: _keys.api_endpoint }); } catch {}
-  }
   populateModelSelectFromActiveProvider();
   updateWsStatus();
 });
@@ -3624,11 +3619,6 @@ document.getElementById('modelSelect').addEventListener('change', e => {
 populateProviderSelect();
 populateModelSelectFromActiveProvider();
 
-// ── Service Worker ──────────────────────────────────────────────
-async function initServiceWorker(keys) {
-  return false;
-}
-
 // ── LLM URL + auth helpers ──────────────────────────────────────
 function getLLMUrl() {
   const ep = (_keys?.api_endpoint || CFG.api_endpoint || '').replace(/\/+$/, '');
@@ -3641,7 +3631,7 @@ function getLLMUrl() {
 }
 
 function getAuthHeaders() {
-  return getProviderAuthHeaders({ json: true, respectServiceWorker: true });
+  return getProviderAuthHeaders({ json: true });
 }
 function getProviderAuthHeaders(options = {}) {
   const h = {};
@@ -3649,8 +3639,7 @@ function getProviderAuthHeaders(options = {}) {
   const provider = options.provider || ACTIVE_PROVIDER || {};
   const providerType = provider.type || PROVIDER;
   const apiKey = provider.apiKey || _keys?.api_key || '';
-  const shouldAuth = !options.respectServiceWorker || !_swReady;
-  if (shouldAuth && apiKey) {
+  if (apiKey) {
     if (providerType === 'anthropic_compat') {
       h['x-api-key'] = apiKey;
       h['anthropic-version'] = '2023-06-01';
@@ -9778,9 +9767,6 @@ async function saveSettings() {
   applyModelContextLimit();
   updateWsStatus();
 
-  if (apiKey) {
-    try { _swReady = await initServiceWorker(_keys); } catch (e) { console.warn(e); }
-  }
   _saveS3CfgFromModal();
   // Sandbox config
   const prevSandbox = getSandboxConfig();
@@ -17776,7 +17762,7 @@ async function pollMediaGeneration(job, mode, provider = ACTIVE_PROVIDER) {
   const url = buildProviderApiUrl(p.videoStatusEndpoint.replace('{id}', encodeURIComponent(id)), p);
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 2000));
-    const resp = await fetchWithRetry(url, { headers: getProviderAuthHeaders({ json: true, respectServiceWorker: false, provider: p }) });
+    const resp = await fetchWithRetry(url, { headers: getProviderAuthHeaders({ json: true, provider: p }) });
     if (!resp.ok) throw new Error('Video status failed: HTTP ' + resp.status);
     const data = await resp.json();
     const status = String(data.status || data.state || '').toLowerCase();
@@ -17799,7 +17785,7 @@ async function runMediaGeneration(mode, prompt, filePaths, options = {}) {
   let resp, errorText = '';
   for (const variant of getMediaGenerationBodyVariants(mode)) {
     const body = buildMediaGenerationBody(mode, prompt, model, images, variant);
-    resp = await fetchWithRetry(url, { method: 'POST', headers: getProviderAuthHeaders({ json: true, respectServiceWorker: false, provider: mediaProvider }), body: JSON.stringify(body), signal: getCurrentRunAbortSignal() });
+    resp = await fetchWithRetry(url, { method: 'POST', headers: getProviderAuthHeaders({ json: true, provider: mediaProvider }), body: JSON.stringify(body), signal: getCurrentRunAbortSignal() });
     if (run) activateConversationRun(run);
     if (resp.ok) break;
     errorText = await resp.text();
@@ -18315,8 +18301,6 @@ marked.setOptions({ gfm: true, breaks: true });
     populateModelSelectFromActiveProvider();
     if (!_keys.api_key) {
       appendSystemMsg('No LLM API key configured. Click Settings in the top bar to add one.');
-    } else {
-      _swReady = await initServiceWorker(_keys);
     }
     let models = _keys.api_models || [];
     if (!models.length && _keys.api_key) models = await fetchModelList();

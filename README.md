@@ -38,7 +38,7 @@ Open one HTML file and you get a fully-featured, internet-aware, programmable, e
 | Capability | Description |
 |---|---|
 | Single-file deployment | Drop `onepagent.html` on any static host or open it locally |
-| Multi-provider LLM | Anthropic / OpenAI / DeepSeek with custom endpoints; keys injected securely via Service Worker |
+| Multi-provider LLM | Anthropic / OpenAI / DeepSeek with custom endpoints; BYOK keys are stored locally and sent directly to the configured API endpoint |
 | Reasoning levels | Inline selector with `off / minimal / low / medium / high / xhigh` tiers |
 | Long context compaction | Per-model context window with automatic LLM-driven summary compression |
 | Long-term memory | Opt-in persistent facts / preferences / events / skills across sessions — auto-extraction, agent tools, manual CRUD, tag & keyword search |
@@ -76,7 +76,7 @@ Open one HTML file and you get a fully-featured, internet-aware, programmable, e
 │  ┌─────┴───────┐ ┌──────────────┐ ┌───────────┐ ┌────────┐  │
 │  │ Service     │ │ LocalStorage │ │ Pyodide   │ │ S3     │  │
 │  │ Worker      │ │ + IndexedDB  │ │ (Python)  │ │ SigV4  │  │
-│  │ (key inject)│ │ (all state)  │ │           │ │ Client │  │
+│  │ (PWA cache) │ │ (all state)  │ │           │ │ Client │  │
 │  └─────┬───────┘ └──────────────┘ └───────────┘ └───┬────┘  │
 └────────┼──────────────────────────────────────────────┼─────┘
          │                                              │
@@ -106,7 +106,7 @@ npx serve .
 
 Visit `http://localhost:8000/onepagent.html`, click **Settings** in the top bar to configure Provider / API Key / Models. Takes effect immediately.
 
-> **Service Worker note**: SWs register only over `https://` or `localhost`. Opening via `file://` falls back to direct fetch.
+> **Service Worker note**: the bundled `sw.js` is only a PWA/offline cache for the app shell and static assets. LLM and Tavily requests are browser direct fetches with the configured BYOK credentials; the Service Worker does not proxy, inject, or hide API keys.
 
 ---
 

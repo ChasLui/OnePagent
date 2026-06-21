@@ -38,7 +38,7 @@
 | 能力 | 说明 |
 |---|---|
 | 单文件部署 | `onepagent.html` 放入任意静态主机或本地打开即可运行 |
-| 多 LLM 供应商 | Anthropic / OpenAI / DeepSeek，可自定义 Endpoint；密钥由 Service Worker 安全注入 |
+| 多 LLM 供应商 | Anthropic / OpenAI / DeepSeek，可自定义 Endpoint；BYOK 密钥仅保存在本地，并在请求时直接发送到配置的 API 端点 |
 | 推理程度控制 | 顶栏内联选择器，支持 `off / minimal / low / medium / high / xhigh` 六档 |
 | 长上下文压缩 | 每模型独立 context window，接近上限时自动 LLM 摘要压缩 |
 | 长期记忆 | 可选开启，跨会话持久保留事实 / 偏好 / 事件 / 技能，自动提取 + Agent 工具调用 + 手动增删，标签与关键词检索 |
@@ -77,7 +77,7 @@
 │  ┌─────┴───────┐ ┌──────────────┐ ┌───────────┐ ┌────────┐  │
 │  │ Service     │ │ LocalStorage │ │ Pyodide   │ │ S3     │  │
 │  │ Worker      │ │ + IndexedDB  │ │ (Python)  │ │ SigV4  │  │
-│  │ (key inject)│ │ (all state)  │ │           │ │ Client │  │
+│  │ (PWA cache) │ │ (all state)  │ │           │ │ Client │  │
 │  └─────┬───────┘ └──────────────┘ └───────────┘ └───┬────┘  │
 └────────┼──────────────────────────────────────────────┼─────┘
          │                                              │
@@ -107,7 +107,7 @@ npx serve .
 
 访问 `http://localhost:8000/onepagent.html`，点击顶栏 **Settings** 配置 Provider / API Key / 模型，保存后即刻生效。
 
-> **Service Worker 限制**：SW 仅在 `https://` 或 `localhost` 下注册。`file://` 打开时自动降级为直连 fetch。
+> **Service Worker 说明**：内置 `sw.js` 只作为 PWA/离线缓存使用，缓存应用壳和静态资源。LLM 与 Tavily 请求是浏览器直连 fetch，并携带你配置的 BYOK 凭据；Service Worker 不代理、不注入、也不隐藏 API Key。
 
 ---
 
